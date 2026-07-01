@@ -1,17 +1,15 @@
 import os
 import numpy as np
 import torch
-import torchvision
 import torchvision.transforms.v2 as v2
 import random
 import time
-from tqdm import tqdm
+# from tqdm import tqdm
 import argparse
 import json
 from functools import wraps
 import inspect
 
-import utils
 import models
 import dataloader
 
@@ -27,7 +25,7 @@ required.add_argument('--data-dir',required=True,
 	help='Input dataset directory.')
 required.add_argument('--net-dir',required=True,
 	help='Output directory for trained model weights.')
-required.add_argument('--log-dir',required=True,default='../log',
+required.add_argument('--log-dir',required=True,default=None,
 	help='Training logs.')
 required.add_argument('-p','--params',required=True,default=None,
 	help='Path to JSON hyperparameter file.')
@@ -51,6 +49,78 @@ CUDA_DEV  = None
 ####################################################################################################
 # SOME HELPER FUNCTIONS
 ####################################################################################################
+class Logger():
+	def __init__(self,path,n_classes):
+		'''
+		path: str
+			The file path to the text file where we log.
+
+		head: [str]
+			The column names to be included.
+		'''
+		self.path = path
+		self.n_classes = n_classes
+
+		header = ['tloss','vloss']
+		per_class = ('tacc','tiou','vacc','vtpr','vppv','viou')
+		for prefix in per_class:
+			header += [f'{prefix}{c}' for c in range(n_classes)]
+
+		self.header = header
+		self.per_class = per_class
+
+		with open(self.path,'w') as fp:
+			fp.write('\t'.join(header)+'\n')
+
+
+	def log(self,metrics):
+		'''
+		metrics: Dict
+		dict {'tloss':..., 'vloss':...,'tacc':tr_acc, 'tiou':tr_iou, ...}
+		'''
+		# line = '\t'.join([f'{_:.5f}' for _ in stats])
+
+		row = [f"{metrics['tloss']:.5f}",f"{metrics['vloss']:.5f}"]
+		for prefix in self.per_class:
+			row += [f'{metrics[prefix][c]:.5f}' for c in range(self.n_classes)]
+
+		with open(self.path,'a') as fp:
+			fp.write('\t'.join(row) + '\n')
+
+
+####################################################################################################
+# SOME HELPER FUNCTIONS
+####################################################################################################
+def save_checkpoint(path,model,optim,scaler,epoch,t_loss,v_loss,best=False):
+	'''
+	Saves model+optim+scaler state as .pth.tar 
+	'''
+	# save_path = f'{MODEL_DIR}/state_{epoch:03d}.pt'
+	if best == True:
+		save_path = f'{path}/best_{model.model_id:03}.pth.tar'
+	else:
+		save_path = f'{path}/model_{model.model_id:03}_e{epoch:02}.pth.tar'
+	checkpoint = {'epoch': epoch,
+					't_loss': t_loss,
+					'v_loss': v_loss,
+					'model_state_dict': model.state_dict(),
+					'optim_state_dict': optim.state_dict(),
+					'scaler_state_dict': scaler.state_dict()}
+	torch.save(checkpoint,save_path)
+
+
+def set_seed(seed,cuda=True):
+	np.random.seed(seed)
+	random.seed(seed)
+	torch.manual_seed(seed)
+	if torch.cuda.is_available():
+		torch.cuda.manual_seed(seed)  # If using CUDA
+		torch.cuda.manual_seed_all(seed)  # If using multiple GPUs
+		torch.backends.cudnn.deterministic = True
+		torch.backends.cudnn.benchmark = False #Am I losing speed here?
+	os.environ['PYTHONHASHSEED'] = str(seed)
+
+
 @torch.no_grad()
 def calculate_metrics(confmat):
 	'''
@@ -89,7 +159,6 @@ def update_confusion_matrix(confmat,T,Y,n_classes):
 		confmat[i,j] += ((T==i) & (Y==j)).sum()
 
 
-
 def total_time_decorator(orig_func):
 	@wraps(orig_func)
 	def wrapper(*args, **kwargs):
@@ -108,6 +177,15 @@ def print_exploding_layers(total_norm,model):
 	            param_norm = param.grad.data.norm(2)
 	            if torch.isinf(param_norm) or torch.isnan(param_norm):
 	                print(f"--- Layer: {name} | Norm: {param_norm}")		
+
+
+def format_stdout_metrics(prefix, loss, acc, iou, n_classes):
+	s = f'[{prefix}] LOSS: {loss:.5f} | ACC: {acc[-1]:.5f}'
+	if n_classes > 2:
+		s += f' | mIoU: {iou.mean().item():.5f}'
+	else:
+		s += f' | IoU_0: {iou[0]:.5f} | IoU_1: {iou[1]:.5f}'
+	return s
 
 ####################################################################################################
 # TRAININING ON FULL DATASET? -- MISSING
@@ -128,17 +206,9 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 	# AUTOMATIC MIXED PRECISION
 	scaler = torch.amp.GradScaler("cuda",enabled=True,init_scale=1024)
 
-	# SET LOG FILE
-	log_file_header = ["tloss","vloss"]
-	log_file_header += [f"tacc{c}" for c in range(n_classes)]
-	log_file_header += [f"tiou{c}" for c in range(n_classes)]
-	log_file_header += [f"vacc{c}" for c in range(n_classes)]
-	log_file_header += [f"vtpr{c}" for c in range(n_classes)]
-	log_file_header += [f"vppv{c}" for c in range(n_classes)]
-	log_file_header += [f"viou{c}" for c in range(n_classes)]	
-	log_file_path   = f'{LOG_DIR}/epoch_log_{model.model_id:03}.tsv'
-	logger     = utils.Logger(log_file_path,log_file_header)
-
+	# LOGS
+	log_file_path = f'{LOG_DIR}/epochs_{model.model_id:03}.tsv'
+	logger        = Logger(log_file_path,n_classes)
 	best_iou   = 0.0
 	best_epoch = 0
 
@@ -148,7 +218,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 		gpu_mat_tr = torch.zeros((n_classes,n_classes),device=CUDA_DEV,dtype=torch.int64) 
 		gpu_mat_va = torch.zeros((n_classes,n_classes),device=CUDA_DEV,dtype=torch.int64)
 
-		# Time
+		# Single epoch time
 		epoch_start_time = time.time()
 		print(f'\nEpoch {epoch}/{epochs-1}')
 		print('-'*80,flush=True)
@@ -159,12 +229,11 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 		# LOGS		
 		loss_sum_tr   = torch.zeros(1,device=CUDA_DEV)
 		sample_sum_tr = torch.zeros(1,device=CUDA_DEV)
-		sum_norms     = torch.zeros(1,device=CUDA_DEV) #gradient norms
+		# sum_norms     = torch.zeros(1,device=CUDA_DEV) #gradient norms
 
 		#LOOP
 		model.train()		
 		for X,T in dataloaders['training']:
-			optimizer.zero_grad()
 
 			#TO DEVICE
 			X = X.to(CUDA_DEV,non_blocking=True)
@@ -176,9 +245,10 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 				loss   = loss_fn(output,T)
 
 			# BACKPROP
+			optimizer.zero_grad()
 			scaler.scale(loss).backward()
 			scaler.unscale_(optimizer)
-			sum_norms += torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+			# sum_norms += torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 			scaler.step(optimizer)
 			scaler.update()
 
@@ -198,17 +268,11 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 		# TRAINING METRICS FOR LOG
 		loss_tr    = (loss_sum_tr/sample_sum_tr).item() #-------------sync
 		cpu_mat_tr = gpu_mat_tr.cpu() #-------------------------------sync
-		avg_norm   = sum_norms.item()/len(dataloaders['training']) #--sync
+		# avg_norm   = sum_norms.item()/len(dataloaders['training']) #--sync
 		tr_ppv,tr_tpr,tr_acc,tr_iou = calculate_metrics(cpu_mat_tr) #tensor,result per class 
-
-		print(f'[T] LOSS: {loss_tr:.5f} | ACC: {tr_acc[-1]:.5f}',end='')
-		if n_classes > 2:
-			va_miou = va_iou.mean().item()
-			print(f' | mIoU: {va_miou:.5f}')
-		else:
-			print(f' | IoU_0: {tr_iou[0]:.5f} | IoU_1: {tr_iou[1]:.5f}')
+		print(format_stdout_metrics('T',loss_tr,tr_acc,tr_iou,n_classes))
 		# norms -------------------------------------------------- remove
-		print(f"AVG NORM: {avg_norm:.5f}")
+		# print(f"AVG NORM: {avg_norm:.5f}")
 		
 		############################################################
 		# VALIDATION
@@ -244,13 +308,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 		loss_va    = (loss_sum_va / sample_sum_va).item() #-------------sync
 		cpu_mat_va = gpu_mat_va.cpu() #---------------------------------sync
 		va_ppv,va_tpr,va_acc,va_iou = calculate_metrics(cpu_mat_va)
-
-		print(f'[V] LOSS: {loss_va:.5f} | ACC: {va_acc[-1]:.5f}',end='')
-		if n_classes > 2:
-			va_miou = va_iou.mean().item()
-			print(f' | mIoU: {va_miou:.5f}')
-		else:
-			print(f' | IoU_0: {va_iou[0]:.5f} | IoU_1: {va_iou[1]:.5f}')
+		print(format_stdout_metrics('V',loss_va,va_acc,va_iou,n_classes))
 
 		############################################################
 		# LOG EPOCH
@@ -260,25 +318,20 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 		print(f'\nEpoch time: {epoch_time:.2f}s')
 
 		# RESULTS
-		epoch_result = [loss_tr,loss_va]
-		epoch_result += [tr_acc[i] for i in range(n_classes)]
-		epoch_result += [tr_iou[i] for i in range(n_classes)]
-		epoch_result += [va_acc[i] for i in range(n_classes)]
-		epoch_result += [va_tpr[i] for i in range(n_classes)]
-		epoch_result += [va_ppv[i] for i in range(n_classes)]
-		epoch_result += [va_iou[i] for i in range(n_classes)]
-		logger.log(epoch_result)
+		logger.log({'tloss': loss_tr, 'vloss': loss_va,
+			'tacc': tr_acc, 'tiou': tr_iou, 'vacc': va_acc,
+			'vtpr': va_tpr, 'vppv': va_ppv, 'viou': va_iou})
 
 		# SAVE MODEL
 		if n_classes > 2:
-			epoch_iou = va_miou #mIoU for 3+ classes
+			epoch_iou = va_iou.mean().item() #mIoU for 3+ classes
 		else:
 			epoch_iou = va_iou[1] #true label iou for 2 classes
 
 		if best_iou < epoch_iou:
 			best_iou   = epoch_iou
 			best_epoch = epoch
-			utils.save_checkpoint(MODEL_DIR,model,optimizer,scaler,epoch,loss_tr,loss_va,best=True)
+			save_checkpoint(MODEL_DIR,model,optimizer,scaler,epoch,loss_tr,loss_va,best=True)
 
 	print(f'Best validation IoU: {best_iou:.5f} -- Epoch {best_epoch}')
 
@@ -304,7 +357,12 @@ if __name__ == "__main__":
 			assert args.gpu < torch.cuda.device_count(), "GPU INDEX OUT OF RANGE."
 		CUDA_DEV = torch.device(f"cuda:{args.gpu}")
 	else:
-		CUDA_DEV = torch.device("cpu")
+		CUDA_DEV = torch.device("cpu") 
+
+	#---------- SET ALL SEEDS ----------------------------------------------------------------------
+	assert HP['SEED'] in (0,1), "INCORRECT SEED VALUE IN JSON HYPEPARAMETER DICT."
+	if HP['SEED'] == True:
+		set_seed(476)
 
 	#---------- INPUT BANDS -----------------------------------------------------------------------
 	assert HP['BANDS'] in [3,4],"INCORRECT BAND NR IN JSON HYPERPARAMETER DICT."
@@ -312,17 +370,12 @@ if __name__ == "__main__":
 
 	#---------- OUTPUT CHANNELS -------------------------------------------------------------------
 	assert HP['OUTPUTS'] in [2,3], "INCORRECT # OF CLASSES SET IN JSON HYPERPARAMETER DICT."
-	n_classes = HP['OUTPUTS'] 
-
-	#---------- SET ALL SEEDS ----------------------------------------------------------------------
-	assert HP['SEED'] in (0,1), "INCORRECT SEED VALUE IN JSON HYPEPARAMETER DICT."
-	if HP['SEED'] == True:
-		utils.set_seed(476)
+	n_classes = HP['OUTPUTS']
 
 	#---------- MODEL -----------------------------------------------------------------------------
-	model_classes = [name for name,obj in inspect.getmembers(model,inspect.isclass)]
+	model_classes = [name for name,obj in inspect.getmembers(models,inspect.isclass)]
 	assert HP['MODEL'] in model_classes, "INCORRECT MODEL STRING IN HYPERPARAMETER DICT"
-	net = eval(f"model.{HP['MODEL']}({HP['ID']},in_channels={n_bands})")
+	net = eval(f"models.{HP['MODEL']}({HP['ID']},in_channels={n_bands},out_labels={n_classes})")
 	net = net.to(CUDA_DEV)
 	net = torch.compile(net)
 
@@ -338,14 +391,11 @@ if __name__ == "__main__":
 	#---------- OPTIMIZER -------------------------------------------------------------------------
 	# assert HP["LEARNING_RATE"] in [0.0001,0.00025,0.0005,0.00075,0.001],"LR OUT OF RANGE."
 	assert HP["OPTIM"] in ["adam","sgd","adamw"], "INCORRECT STRING FOR OPTIMIZER IN DICT."
-
 	if HP['OPTIM'] == "adam":
 		optimizer = torch.optim.Adam(net.parameters(),lr=HP['LEARNING_RATE'])
 	if HP['OPTIM'] == "sgd":
 		optimizer = torch.optim.SGD(net.parameters(),lr=HP['LEARNING_RATE'])
 	if HP['OPTIM'] == 'adamw':
-		assert "DECAY" in HP, "DECAY UNDEFINED FOR ADAMW RUN."
-		# assert HP["DECAY"] in [0.01,0.001,0.0001,0.00001,0.000001], "DECAY OUT OF RANGE."
 		optimizer = torch.optim.AdamW(net.parameters(),lr=HP['LEARNING_RATE'],
 			weight_decay=HP["DECAY"])
 

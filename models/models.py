@@ -95,14 +95,24 @@ class MultiHeadCrossAttention(nn.Module): #<<< option?
 		self.W_out     = nn.Linear(d_model, d_model, bias=False)
 		self.dropout   = nn.Dropout(dropout)
 
-	def forward(self, x, enc_out, mask=None):
+	def forward(self, x, enc_out):
+		'''
+		query:     x
+		key,value: enc_out
+		'''
 		B, N, _ = x.shape
 		S        = enc_out.size(1)
 		Q        = self.W_q(x).view(B, N, self.num_heads, self.head_dim).transpose(1, 2)
 		K, V     = self.W_kv(enc_out).chunk(2, dim=-1)
 		K        = K.view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
 		V        = V.view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
-		x        = F.scaled_dot_product_attention(Q, K, V, attn_mask=mask,dropout_p=self.dropout.p if self.training else 0.0)
+
+
+		attn = (Q @ K.transpose(-2, -1)) # [B,num_heads,N,N]
+		attn = attn / (self.head_dim ** 0.5)
+		attn = attn.softmax(dim=-1)
+
+		x = attn @ V # [B,num_heads,N,H]
 		x = x.transpose(1, 2).contiguous().view(B, N, -1)
 		return self.W_out(x)
 
@@ -525,10 +535,10 @@ _DECODERS = {'cnn': CNNDecoder, 'vit': ViTDecoder}
 class UNet(nn.Module):
 	def __init__(self,model_id,encoder='cnn',decoder='cnn',in_channels=3,out_labels=2):
 		super().__init__()
-        assert encoder in _ENCODERS, f"encoder str must be one of {list(_ENCODERS)}"
-        assert decoder in _DECODERS, f"decoder str must be one of {list(_DECODERS)}"
+		assert encoder in _ENCODERS, f"encoder str must be one of {list(_ENCODERS)}"
+		assert decoder in _DECODERS, f"decoder str must be one of {list(_DECODERS)}"
 
-        # PARAMS/LOGS
+		# PARAMS/LOGS
 		self.model_id  = model_id
 		self.model_name = "unet_modular"
 
