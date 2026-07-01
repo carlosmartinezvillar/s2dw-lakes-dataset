@@ -14,16 +14,38 @@ class ConvBlock(nn.Module):
 	def __init__(self,channels):
 		super().__init__()
 		self.block = nn.Sequential(
-			nn.Conv2d(channels,channels,3,padding=1,bias=True)
-			nn.GroupNorm(1,channels)
+			nn.Conv2d(channels,channels,kernel_size=3,stride=1,padding=1,bias=True),
+			nn.GroupNorm(1,channels),
+			nn.GELU(),
+			nn.Conv2d(channels,channels,kernel_size=3,stride=1,padding=1,bias=True),
+			nn.GroupNorm(1,channels),
 			nn.GELU()
-			nn.Conv2d(channels,channels,3,padding=1,bias=True)
-			nn.GroupNorm(1,channels)
-			nn.GELU()			
 		)
 
 	def forward(self,x):
 		return x + self.block(x)
+
+
+class ConvBlockSeparable(nn.Module):
+	'''
+	Base convolutional block, with separable convolutions.
+	Channel dimension consistent throughout block to match skip/residual.
+	'''
+	def __init__(self,channels):
+		super().__init__()
+		self.block = nn.Sequential(
+			nn.Conv2d(channels,channels,3,1,padding=1,groups=channels,bias=True),
+			nn.Conv2d(channels,channels,1,1,padding=0,bias=True),
+			nn.GroupNorm(1,channels),
+			nn.GELU(),
+			nn.Conv2d(channels,channels,3,1,padding=1,groups=channels,bias=True),
+			nn.Conv2d(channels,channels,1,1,padding=0,bias=True),
+			nn.GroupNorm(1,channels),
+			nn.GELU()
+		)
+
+	def forward(self,x):
+		return x + self.block(x)	
 
 ################################################################################
 # ViT Blocks
@@ -41,7 +63,7 @@ class MultiHeadSelfAttention(nn.Module):
 		assert E % num_heads == 0, f"channels={E} not divisible by num_heads={num_heads}"
 		self.E         = E
 		self.num_heads = num_heads
-		self.H         = E // num_heads
+		self.head_dim  = E // num_heads
 		self.W_qkv  = nn.Linear(E, E * 3, bias=False)
 		self.W_o    = nn.Linear(E, E, bias=False)
 
@@ -54,7 +76,7 @@ class MultiHeadSelfAttention(nn.Module):
 		V = V.view(B,N,self.num_heads,self.head_dim).transpose(1,2)
 
 		attn = (Q @ K.transpose(-2, -1)) # [B,num_heads,N,N]
-		attn = attn / (self.H ** 0.5)
+		attn = attn / (self.head_dim ** 0.5)
 		attn = attn.softmax(dim=-1)
 
 		x = attn @ V # [B,num_heads,N,H]
@@ -219,7 +241,7 @@ class TokenizedUpsampleConv(nn.Module):
 		self.W = W
 		self.E_in = E_in
 
-		self.conv = nn.ConvTransposed2d(E_in,E_in//2,kernel_size=4,stride=2,padding=1)
+		self.conv = nn.ConvTranspose2d(E_in,E_in//2,kernel_size=4,stride=2,padding=1)
 		self.gelu = nn.GELU()
 		self.norm = nn.LayerNorm(E_in//2)
 
@@ -346,7 +368,7 @@ class ViTEncoder(nn.Module):
 		self.encoder_1 = ConvBlock(32)
 		self.down_1    = nn.Conv2d(32,64,**down_params)
 		self.encoder_2 = ConvBlock(64)
-		self.down_2    = nn.Conv2d(64,128,**down_pararms)
+		self.down_2    = nn.Conv2d(64,128,**down_params)
 		self.encoder_3 = ViTBlock(128,num_heads=2)		
 		self.down_3    = nn.Conv2d(128,256,**down_params)
 		self.encoder_4 = ViTBlock(256,num_heads=4)
@@ -365,7 +387,7 @@ class ViTEncoder(nn.Module):
 ################################################################################
 # ViT Encoder #2
 ################################################################################
-class ViTEncoderStemmed():
+class ViTEncoderStemmed(nn.Module):
 	'''
 	Patch embedding on inputs HxW to H/4xW/4. CNN stem to pass high-dimension 
 	feature maps from encoder to decoder.
@@ -377,20 +399,20 @@ class ViTEncoderStemmed():
 
 		#CNN STEM
 		self.stem_1 = nn.Sequential(
-			nn.Conv2d(32,32,**stem_params)
-			nn.GroupNorm(1,32)
+			nn.Conv2d(32,32,**stem_params),
+			nn.GroupNorm(1,32),
 			nn.GELU()
 		)
 		self.down_1 = nn.Conv2d(32,64,**down_params)
 		self.stem_2 = nn.Sequential(
-			nn.Conv2d(64,64,**stem_params)
-			nn.GroupNorm(1,64)
+			nn.Conv2d(64,64,**stem_params),
+			nn.GroupNorm(1,64),
 			nn.GELU()
 		)
 
 		# EMBEDDING AND POSITIONAL ENCODING
 		self.embed = PatchEmbedding(img_size=256,patch_size=4,in_channels=3,E=128)
-		self.pe    = SinusoidalPositionalEncoding2D(E=28,num_patches_h=16,num_patches_w=16)
+		self.pe    = SinusoidalPositionalEncoding2D(E=128,num_patches_h=64,num_patches_w=64)
 
 		# ViT Layers
 		self.encoder_3 = ViTBlock(128,num_heads=2)
@@ -406,7 +428,7 @@ class ViTEncoderStemmed():
 		enc_2 = self.stem_2(self.down_1(enc_1))
 
 		tokens = self.pe(self.embed(x))
-		bchw   = tokens.reshape(B,16,16,128).permute(0,3,1,2)
+		bchw   = tokens.reshape(B,64,64,128).permute(0,3,1,2)
 
 		enc_3 = self.encoder_3(bchw)
 		enc_4 = self.encoder_4(self.down_3(enc_3))
@@ -418,7 +440,7 @@ class ViTEncoderStemmed():
 ################################################################################
 # ViT Decoder
 ################################################################################
-class ViTDecoder():
+class ViTDecoder(nn.Module):
 	'''
 	3-stage ViT & 2-stage CNN. Mirrors ViTEncoder().
 	'''
@@ -514,7 +536,7 @@ class UNet(nn.Module):
 		self.in_layer  = nn.Conv2d(in_channels,32,3,1,1,bias=True)
 		self.encoder   = _ENCODERS[encoder]()
 		self.decoder   = _DECODERS[decoder]()
-		self.out_layer = nn.Conv2d(32,out_labels)
+		self.out_layer = nn.Conv2d(32,out_labels,kernel_size=1,padding=0)
 
 
 	def forward(self,x):
@@ -586,7 +608,7 @@ if __name__ == '__main__':
 	]
 
 	for enc, dec in variations:
-		model = UNet(model_id=0,encoder=enc,decoder=decoder)
+		model = UNet(model_id=0,encoder=enc,decoder=dec)
 		model.eval()
 		with torch.no_grad():
 			out = model(x)
