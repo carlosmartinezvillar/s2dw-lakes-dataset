@@ -47,7 +47,7 @@ MODEL_DIR = args.net_dir
 CUDA_DEV  = None
 
 ####################################################################################################
-# SOME HELPER FUNCTIONS
+# CLASSES
 ####################################################################################################
 class Logger():
 	def __init__(self,path,n_classes):
@@ -91,6 +91,12 @@ class Logger():
 ####################################################################################################
 # SOME HELPER FUNCTIONS
 ####################################################################################################
+def check_scheduler():
+	for epoch in range(10):
+	    print(f"Epoch {epoch}: LR = {scheduler.get_last_lr()[0]}")
+	    # Execute optimizer.step() simulation
+	    scheduler.step()
+
 def save_checkpoint(path,model,optim,scaler,epoch,t_loss,v_loss,best=False):
 	'''
 	Saves model+optim+scaler state as .pth.tar 
@@ -375,7 +381,7 @@ if __name__ == "__main__":
 	#---------- MODEL -----------------------------------------------------------------------------
 	model_classes = [name for name,obj in inspect.getmembers(models,inspect.isclass)]
 	assert HP['MODEL'] in model_classes, "INCORRECT MODEL STRING IN HYPERPARAMETER DICT"
-	net = eval(f"models.{HP['MODEL']}({HP['ID']},in_channels={n_bands},out_labels={n_classes})")
+	net = eval(f"models.{HP['MODEL']}({HP['ID']},{n_bands},{n_classes})")
 	net = net.to(CUDA_DEV)
 	net = torch.compile(net)
 
@@ -385,11 +391,10 @@ if __name__ == "__main__":
 		loss_fn = torch.nn.CrossEntropyLoss()
 	if HP['LOSS'] == "ew":
 		loss_fn = None
-	if HP['LOSS'] == "cw": #<<< --- Needs some work...
+	if HP['LOSS'] == "cw": #<<< --- Useful later...
 		loss_fn = None
 
 	#---------- OPTIMIZER -------------------------------------------------------------------------
-	# assert HP["LEARNING_RATE"] in [0.0001,0.00025,0.0005,0.00075,0.001],"LR OUT OF RANGE."
 	assert HP["OPTIM"] in ["adam","sgd","adamw"], "INCORRECT STRING FOR OPTIMIZER IN DICT."
 	if HP['OPTIM'] == "adam":
 		optimizer = torch.optim.Adam(net.parameters(),lr=HP['LEARNING_RATE'])
@@ -398,15 +403,6 @@ if __name__ == "__main__":
 	if HP['OPTIM'] == 'adamw':
 		optimizer = torch.optim.AdamW(net.parameters(),lr=HP['LEARNING_RATE'],
 			weight_decay=HP["DECAY"])
-
-	#---------- LEARNING RATE SCHEDULER ------------------------------------------------------------
-	assert HP["SCHEDULER"] in ["step","exp","none"] #making it overly explicit for logs/results
-	if HP['SCHEDULER'] == "step":
-		scheduler = torch.optim.lr_scheduler.StepLR(optimizer,step_size=10,gamma=0.3)
-	if HP['SCHEDULER'] == "exp":
-		scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer,gamma=0.9)
-	if HP['SCHEDULER'] == "none":
-		scheduler = None
 
 	#---------- DATALOADERS ------------------------------------------------------------------------
 	transform = v2.Compose([
@@ -442,6 +438,18 @@ if __name__ == "__main__":
 			pin_memory=True,
 			prefetch_factor=10)
 	}
+
+
+	#---------- LEARNING RATE SCHEDULER ------------------------------------------------------------
+	warmup_steps = 5
+	if HP['SCHEDULER'] == "cos":
+		cosine_steps     = HP['EPOCHS'] - warmup_steps
+		warmup_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer,start_factor=1e-8,end_factor=1.0,total_iters=warmup_steps)
+		cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer,T_0=cosine_steps,T_mult=1,eta_min=0.0)
+		scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer,schedulers=[warmup_scheduler,cosine_scheduler],milestones=[warmup_steps])
+	if HP['SCHEDULER'] == "none":
+		scheduler = None
+
 
 	#---------- TRAINING --------------------------------------------------------------------------
 	train_and_validate(

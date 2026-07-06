@@ -11,16 +11,23 @@ class ConvBlock(nn.Module):
 	Base convolutional block in stage of hierarchy.
 	Channel dimension consistent throughout block to match skip/residual.
 	'''
-	def __init__(self,channels):
+	def __init__(self,channels,depth=2):
 		super().__init__()
-		self.block = nn.Sequential(
-			nn.Conv2d(channels,channels,kernel_size=3,stride=1,padding=1,bias=True),
-			nn.GroupNorm(1,channels),
-			nn.GELU(),
-			nn.Conv2d(channels,channels,kernel_size=3,stride=1,padding=1,bias=True),
-			nn.GroupNorm(1,channels),
-			nn.GELU()
-		)
+		self.block = nn.ModuleList()
+		# self.block = nn.Sequential(
+			# nn.Conv2d(channels,channels,kernel_size=3,stride=1,padding=1,bias=True),
+			# nn.GroupNorm(1,channels),
+			# nn.GELU(),
+			# nn.Conv2d(channels,channels,kernel_size=3,stride=1,padding=1,bias=True),
+			# nn.GroupNorm(1,channels),
+			# nn.GELU()
+		# )
+		for i in range(depth):
+			self.block.append(nn.Sequential(
+				nn.Conv2d(channels,channels,kernel_size=3,stride=1,padding=1,bias=True),
+				nn.GroupNorm(1,channels),
+				nn.GELU()
+			))
 
 	def forward(self,x):
 		return x + self.block(x)
@@ -157,10 +164,10 @@ class ViTBlock(nn.Module):
 	'Block' means a grouping intended as equivalent to 'convolutional' block in CNNs.
 	Takes an 'image-shaped' feature map [B,C,H,W]. Returns tensor of same shape.
 	'''
-	def __init__(self,E,num_heads,mlp_ratio=4):
+	def __init__(self,E,num_heads,mlp_ratio=4,depth=1):
 		super().__init__()
-		# self.layers = nn.ModuleList([ViTLayer(E,num_heads) for _ in range(depth)])
-		self.block = ViTLayer(E,num_heads,mlp_ratio) #single layer for now
+		self.block = nn.ModuleList([ViTLayer(E,num_heads,mlp_ratio) for _ in range(depth)])
+		# self.block = ViTLayer(E,num_heads,mlp_ratio) #single layer for now
 
 	def forward(self,x):
 		B,C,H,W = x.shape
