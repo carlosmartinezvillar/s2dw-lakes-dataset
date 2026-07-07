@@ -14,6 +14,7 @@ from PIL import Image
 import sys
 import argparse
 import subprocess as sp
+import shutil
 
 # Chip properties
 CHIP_SIZE = 256
@@ -442,3 +443,10 @@ if __name__ == '__main__':
 			product = Product(safe_local_path,label_local_path)
 			print(f'[{i+1}/{N}] PROCESSING {product.base_id}')		
 			chip_image(product)
+
+		########## DELETE CHUNK DATA #####################
+		for safe_path,label_path in chunk:
+			safe_local_path  = f"{WORK_DIR}/{safe_path.split("/")[-1]}" #remove 'eodata/../'
+			label_local_path = f"{WORK_DIR}/{label_path}"
+			shutil.rmtree(safe_local_path)
+			os.remove(label_local_path)
