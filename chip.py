@@ -2,13 +2,10 @@
 A script to produce 256x256 image-lable chip pairs from existing
 directories of Sentinel-2 images and DynamicWorld V1 matching labels.
 '''
-
 import os
-import xml.etree.ElementTree as ET
 import rasterio as rio
 from rasterio.windows import Window
 import numpy as np
-import matplotlib.pyplot as plt
 import glob
 import math
 import multiprocessing as mp
@@ -16,118 +13,148 @@ import time
 from PIL import Image
 import sys
 import argparse
+import subprocess as sp
 
+# Chip properties
+CHIP_SIZE = 256
+STRIDE    = 256
+WATER_MIN = 256*256//4
+WATER_MAX = 256*256 - WATER_MIN
+
+# Multiprocessing config
+N_PROC    = 8
+
+# Set by argparse
+WORK_DIR  = None #temp for s2,dw -- fast,local
+CHIP_DIR  = None #output dir -- fast,local
+S2_DIR    = None #large storage -- slow
+DW_DIR    = None #large storage -- slow
 
 class Product():
-	def __init__(self,safe_path):
-		self.safe_path = safe_path
+	def __init__(self,safe_path,label_path):
+		# Absolute paths
+		self.safe_path  = safe_path #dir
+		self.label_path = label_path #single file
+
+		# Strings
 		self.safe_id = safe_path.split('/')[-1]
-		self.tile  = self.safe_id[38:44]
-		self.date  = self.safe_id[11:26]
-		self.orbit = self.safe_id[33:37]
+		self.base_id = self.set_chip_base_str()
 
-		self.label_path = None
+		# rasterio.DatasetReader
+		self.s2_readers = [rio.open(p,'r',tiled=True) for p in self.get_band_paths()]
+		self.dw_reader  = rio.open(self.label_path,'r',tiled=True)
 
-	def get_datastrip_id(str):
-		pass
-
-
-	def get_dw_id():
-		pass
+		# ALIGN RASTERS
+		self.s2_borders,self.dw_borders = self.align_s2_dw(self.s2_readers[0],self.dw_reader)
 
 
-def clean_dynamicworld_borders(src: rio.DatasetReader) -> dict:
+	def set_chip_base_str(self):
+			orbit = self.safe_id.split('_')[4]
+			return f"{self.label_path.split('/')[-1].rstrip('.tif')}_{orbit}"
+
+
+	def get_band_paths(self):
+		date = self.safe_id.split('_')[2]
+		y = date[0:4]
+		m = date[4:6]
+		d = date[6:8]
+		band_regex = f"GRANULE/*/IMG_DATA/R10m/*_10m.jp2"
+		paths = [f"{self.safe_path}/{s}" for s in glob.glob(band_regex,root_dir=self.safe_path)]
+		return paths
+
+
+	def align_s2_dw(self,s2_src:rio.DatasetReader,dw_src:rio.DatasetReader) -> Tuple:
+		'''
+		Match indices and remove borders.
+		'''
+		########## 1. REMOVE DW NO-DATA BORDERS(~1-2px each side) ##########
+		dw_top    = 0
+		dw_bottom = dw_src.height-1
+		dw_left   = 0
+		dw_right  = dw_src.width-1
+
+		while(True):
+			row = dw_src.read(1,window=rio.windows.Window(0,dw_top,dw_src.width,1))
+			if row.sum() == 0:
+				dw_top += 1
+			else:
+				break
+
+		while(True):
+			row = dw_src.read(1,window=rio.windows.Window(0,dw_bottom,dw_src.width,1))
+			if row.sum() == 0:
+				dw_bottom -= 1
+			else:
+				break
+
+		while(True):
+			col = dw_src.read(1,window=rio.windows.Window(dw_left,0,1,dw_src.height))
+			if col.sum() == 0:
+				dw_left += 1
+			else:
+				break
+
+		while(True):
+			col = dw_src.read(1,window=rio.windows.Window(dw_right,0,1,dw_src.height))
+			if col.sum() == 0:
+				dw_right -= 1
+			else:
+				break
+
+		dw_ij = {'top':dw_top, 'bottom':dw_bottom, 'left':dw_left, 'right':dw_right}
+
+		########### 2.MATCH DW to S2 (DW has ~20px less on each side) ##########
+		# DW ij's (px indices) to DW xy's (coords)
+		dw_xy_ul = dw_src.xy(dw_ij['top'],dw_ij['left'],offset='center')
+		dw_xy_lr = dw_src.xy(dw_ij['bottom'],dw_ij['right'],offset='center')
+
+		# DW xy's (coords) to S2 ij's (px indices) -- DW is smaller
+		s2_ij = {}
+		s2_ij['top'],s2_ij['left']     = s2_src.index(dw_xy_ul[0],dw_xy_ul[1],op=math.floor)
+		s2_ij['bottom'],s2_ij['right'] = s2_src.index(dw_xy_lr[0],dw_xy_lr[1],op=math.floor)
+
+		########## 3.REMOVE S2 TILE OVERLAP & ADJUST DW ACCORDINGLY ##########
+		if s2_ij['top'] < 492: #shift top border down
+			delta        = 492 - s2_ij['top']
+			s2_ij['top'] = 492
+			dw_ij['top'] = dw_ij['top'] + delta
+
+		if s2_ij['bottom'] > 10487: #shift bottom border up
+			delta           = s2_ij['bottom'] - 10487
+			s2_ij['bottom'] = 10487	
+			dw_ij['bottom'] = dw_ij['bottom'] - delta
+
+		if s2_ij['left'] < 492: #shift left border right
+			delta         = 492 - s2_ij['left']
+			s2_ij['left'] = 492	
+			dw_ij['left'] = dw_ij['left'] + delta
+
+		if s2_ij['right'] > 10487: #shift right border left
+			delta          = s2_ij['right'] - 10487
+			s2_ij['right'] = 10487		
+			dw_ij['right'] = dw_ij['right'] - delta
+
+		return s2_ij,dw_ij	
+
+
+def get_datastrip_id(str):
 	'''
-	Take a rasterio DatasetReader for a dynamicworld image and get the indices 
-	where non-zeros begin at the top, bottom, left, and right.
-
-	Parameters
-	----------
-	src: rasterio.DatasetReader
-		Dataset reader for a dynamic world array (which has zeroes where S2
-		still has data, making it redundant to check for zeroes in the S2 array).
-
-	Returns
-	-------
-	dict
-		dictionary with indices of first non-zero values at top, left, right, 
-		bottom
-
+	Given a string like /*.SAFE/GRANULE/SUBFOLDER, use SUBFOLDER to return
+	datastrip id
 	'''
-	top    = 0
-	bottom = src.height-1
-	left   = 0
-	right  = src.width-1
-
-	while(True):
-		row = src.read(1,window=rio.windows.Window(0,top,src.width,1))
-		if row.sum() == 0:
-			top += 1
-		else:
-			break
-
-	while(True):
-		row = src.read(1,window=rio.windows.Window(0,bottom,src.width,1))
-		if row.sum() == 0:
-			bottom -= 1
-		else:
-			break
-
-	while(True):
-		col = src.read(1,window=rio.windows.Window(left,0,1,src.height))
-		if col.sum() == 0:
-			left += 1
-		else:
-			break
-
-	while(True):
-		col = src.read(1,window=rio.windows.Window(right,0,1,src.height))
-		if col.sum() == 0:
-			right -= 1
-		else:
-			break
-
-	return {'top':top, 'bottom':bottom, 'left':left, 'right':right}
+	pass
 
 
-def align_s2_dw(s2_src: rio.DatasetReader,dw_src: rio.DatasetReader) -> Tuple:
+def get_dw_id(safe_str,datastrip_str):
 	'''
-	Do everything: match indices and remove borders.
+	Build DynamicWorldV1 (DW) product ID from *.SAFE folder name and datastrip str.
+	DW follows {date}_{datastrip}_{tile} convention.
 	'''
-	# 1. REMOVE DW NO-DATA BORDERS(~1-2px each side)
-	dw_ij = remove_label_borders(dw_src) # <---- THIS CAN BE COMBINED
-
-	# 2. MATCH DW to S2 (DW has ~20px less on each side) 
-	# DW ij's (px index) -> DW xy's (coords)
-	dw_xy_ul = dw_src.xy(dw_ij['top'],dw_ij['left'],offset='center')
-	dw_xy_lr = dw_src.xy(dw_ij['bottom'],dw_ij['right'],offset='center')
-	# DW xy's (coords) -> S2 ij's (px index)
-	s2_ij = {}
-	s2_ij['top'],s2_ij['left']     = s2_src.index(dw_xy_ul[0],dw_xy_ul[1],op=math.floor)
-	s2_ij['bottom'],s2_ij['right'] = s2_src.index(dw_xy_lr[0],dw_xy_lr[1],op=math.floor)
-
-	# 3. TRIM S2 -- REMOVE S2 TILE OVERLAP & ADJUST DW
-	if s2_ij['top'] < 492: #shift top border down
-		delta        = 492 - s2_ij['top']
-		s2_ij['top'] = 492
-		dw_ij['top'] = dw_ij['top'] + delta
-
-	if s2_ij['bottom'] > 10487: #shift bottom border up
-		delta           = s2_ij['bottom'] - 10487
-		s2_ij['bottom'] = 10487	
-		dw_ij['bottom'] = dw_ij['bottom'] - delta
-
-	if s2_ij['left'] < 492: #shift left border right
-		delta         = 492 - s2_ij['left']
-		s2_ij['left'] = 492	
-		dw_ij['left'] = dw_ij['left'] + delta
-
-	if s2_ij['right'] > 10487: #shift right border left
-		delta          = s2_ij['right'] - 10487
-		s2_ij['right'] = 10487		
-		dw_ij['right'] = dw_ij['right'] - delta
-
-	return s2_ij,dw_ij	
+	# tile  = safe_str[38:44]
+	# date  = safe_str[11:26]
+	tile = safe_str.split('_')[-2]
+	date = safe_str.split('_')[2] #more readable
+	return f"{date}_{datastrip_str}_{tile}.tif"
 
 
 def get_strided_windows(borders:dict) -> [Tuple]:
@@ -185,15 +212,14 @@ def get_strided_windows(borders:dict) -> [Tuple]:
 	return windows
 
 
-def chip_image(product,base_id,index,N):
+def chip_image(product):
 
 	# STDOUT
-	print(f'[{index+1}/{N}] PROCESSING {base_id}')
-	start_time = time.time()
+	start_time = time.perf_counter()
 
 	# LOAD BAND ARRAYS, CLIP, & NORMALIZE
-	rgbn = []
-	zero = []
+	rgbn  = []
+	zeros = []
 	for reader in product.s2_readers:
 
 		# LOAD
@@ -207,15 +233,14 @@ def chip_image(product,base_id,index,N):
 		# CLIP & NORMALIZE
 		zero_mask   = band_array == 0
 		high_cutoff = int(np.percentile(band_array[~zero_mask],99))
-		# low_cutoff  = int(np.percentile(band_array[~zero_mask],1))
 		low_cutoff  = 0
 		band_array  = np.clip(band_array,low_cutoff,high_cutoff)
-		band_array  = np.round((band_array-low_cutoff)/(high_cutoff-low_cutoff)*255).astype(np.uint8)
-		zero.append(zero_mask)
+		band_array  = np.round((band_array-low_cutoff)/(high_cutoff-low_cutoff)*255)
+		band_array  = band_array.astype(np.uint8)
+		zeros.append(zero_mask)
 		rgbn.append(band_array)
 
 	# SET WINDOWS
-	# s2_borders = {'top': 492, 'bottom': 10487, 'left': 492, 'right': 10487}
 	s2_windows = get_strided_windows(product.s2_borders)
 	dw_windows = get_strided_windows(product.dw_borders)
 
@@ -234,20 +259,24 @@ def chip_image(product,base_id,index,N):
 	for i in range(N_PROC):
 		p = mp.Process(
 			target=chip_image_worker,
-			args=(rgbn,zero_mask,label_path,s2_window_chunks[i],base_id,lock)
+			args=(rgbn,zeros,product.label_path,s2_window_chunks[i],dw_window_chunks[i],product.base_id,lock)
 		)
 		p.start()
 		processes.append(p)
 
-	for p in processes:
+	for i,p in enumerate(processes):
 		p.join(timeout=60)
+		if p.is_alive():
+			print(f"Worker {i} timed out.")
+		elif p.exitcode != 0:
+			print(f"Worker {i} exited with code {p.exitcode}")
 
 	# STDOUT	
-	exec_time = time.time() - start_time
+	exec_time = time.perf_counter() - start_time
 	print(f"All workers done ({exec_time:.3f} secs). ")
 
 
-def chip_image_worker(rgbn,zero_mask,label_path,s2_windows,dw_windows,base_id,lock):
+def chip_image_worker(rgbn,zeros,label_path,s2_windows,dw_windows,base_id,lock):
 
 	# Label DatasetReader -- per thread
 	lbl_rdr = rio.open(label_path,'r',tiled=True)
@@ -270,7 +299,7 @@ def chip_image_worker(rgbn,zero_mask,label_path,s2_windows,dw_windows,base_id,lo
 			continue
 
 		# CHECK RGB-NIR NO DATA
-		zero_window = zero_mask[w.row_off:w.row_off+CHIP_SIZE, w.col_off:w.col_off+CHIP_SIZE]
+		zero_window = zeros[w.row_off:w.row_off+CHIP_SIZE, w.col_off:w.col_off+CHIP_SIZE]
 		if zero_window.sum() > 0:
 			continue
 
@@ -291,6 +320,8 @@ def chip_image_worker(rgbn,zero_mask,label_path,s2_windows,dw_windows,base_id,lo
 
 		# SAVE LABEL
 		outfile = f'{base_id}_{row:02}_{col:02}_LBL.tif'
+		lbl_arr[lbl_arr!=1] = 0
+		lbl_arr[lbl_arr==1] = 255 #set positive to 255, negative to 0
 		Image.fromarray(lbl_array).save(outfile)
 
 		# STATS/LOG
@@ -304,43 +335,110 @@ def chip_image_worker(rgbn,zero_mask,label_path,s2_windows,dw_windows,base_id,lo
 
 
 def parse_args():
-	pass
+
+	########## ARGV CONFIG ##########
+	parser = argparse.ArgumentParser(
+		prog="chip.py",
+		description="Sentinel-2 and DynamicWorld V1 Products to 256x256 images.")
+	parser.add_argument('--work-dir',default=None,
+		help="Temporary directory to load/offload data.")
+	parser.add_argument('--chip-dir',default=None,
+		help="Output directory for resulting chips")
+	parser.add_argument('--s2-dir',default=None,
+		help="Source directory for raw Sentinel-2 products.")
+	parser.add_argument('--dw-dir',default=None,
+		help="Source directory for 10980x10980 mask rasters.")
+
+	########## SET ARGS ##########
+	args = parser.parse_args()
+
+	global WORK_DIR
+	global CHIP_DIR
+	global S2_DIR
+	global DW_DIR
+
+	WORK_DIR = args.work_dir
+	CHIP_DIR = args.chip_dir
+	S2_DIR   = args.s2_dir 
+	DW_DIR   = args.label_dir
+
+	if not os.path.isdir(WORK_DIR):
+		print(f"WORK_DIR {WORK_DIR} not found. EXIT(1).")
+		sys.exit(1)
+	if WORK_DIR[-1] == '/':
+		WORK_DIR = WORK_DIR.rstrip('/')
+
+	if CHIP_DIR is None:
+		os.makedirs(WORK_DIR + '/chips',exist_ok=True)
+		CHIP_DIR = WORK_DIR + '/chips'
+	if not os.path.isdir(CHIP_DIR):
+		print(f"CHIP_DIR in {CHIP_DIR} not found. EXIT(1).")
+		sys.exit(1)
+
+	if not os.path.isdir(S2_DIR):
+		print("S2_DIR not found. EXIT(1).")
+		sys.exit(1)
+	if S2_DIR[-1] == '/':
+		S2_DIR = S2_DIR.rstrip('/')
+
+	if not os.path.isdir(LABEL_DIR):
+		print("LABEL_DIR not found. EXIT(1).")
+		sys.exit(1)
+	if LABEL_DIR[-1] == '/':
+		LABEL_DIR = LABEL_DIR.rstrip('/')
+
+	print(f"WORK_DIR set to: {WORK_DIR}")
+	print(f"CHIP_DIR set to: {CHIP_DIR}")
+	print(f"S2_DIR set to:   {S2_DIR}")
+	print(f"DW_DIR set to:   {DW_DIR}")	
 
 
 if __name__ == '__main__':
-	pass
-	# parse_args()
+	########## ARGS ##################################	
+	parse_args()
 
-	safe_regex = "eodata/Sentinel-2/MSI/L2A/*/*/*/*.SAFE/"
-	# band2_regex = "eodata/Sentinel-2/MSI/L2A/*/*/*/*.SAFE/GRANULE/*/IMG_DATA/R10m/*_B02_10m.jp2"
-	s2_safes    = glob.glob(safe_regex,root_dir=S2_DIR)
+	########## FILTER ################################ #only products matching label
+	safe_regex   = "eodata/Sentinel-2/MSI/L2A/*/*/*/*.SAFE"
+	remote_safes = glob.glob(safe_regex,root_dir=S2_DIR) #returns ['/eodata/.../*.SAFE']
 
-	########## FILTER ######################### #only products with matching label
+	subdirs    = [glob.glob("*",root_dir=f"{s}/GRANULE")[0] for s in safes]
+	datastrips = [s.split('_')[-1] for s in subdirs]
+	dw_ids     = [get_gee_id(s,d) for s,d in zip(remote_safes,datastrips)]	
+
+	dw_files     = glob.glob("*.tif",root_dir=DW_DIR) # actual label dir
+	intersection = np.isin(dw_ids,dw_files)
+	good_safes   = remote_safes[intersection]
+	good_labels  = dw_ids[intersection] #match order
 
 
 	########## SPLIT AND QUEUE ################
 	chunk_size  = 50
-	N_chunks    = len(s2_products) // chunk_size
-	remainder   = len(s2_products) % chunk_size
-	chunk_queue = []
+	N_chunks    = len(good_safes) // chunk_size
+	remainder   = len(good_safes) % chunk_size
+	chunk_queue = [] # [[(s2_str,dw_str)]]
 	for i in range(N_chunks):
-		chunk_queue.append(s2_products[i*chunk_size:i*chunk_size+chunk_size])
+		chunk_safes  = good_safes[i*chunk_size:i*chunk_size+chunk_size]
+		chunk_labels = good_labels[i*chunk_size:i*chunk_size+chunk_size]
+		chunk_queue.append(list(zip(chunk_safes,chunk_labels)))
 	if remainder != 0:
-		chunk_queue.append(s2_products[N_chunks*chunk_size:])
+		chunk_safes  = good_safes[N_chunks*chunk_size:]
+		chunk_labels = good_labels[N_chunks*chunk_size:]
+		chunk_queue.append(list(zip(chunk_safes,chunk_labels)))
 
 
-	########## BATCH PROCESS ##################
+	########## BATCH PROCESS #########################
 	for chunk in chunk_queue:
 
-		########## COPY CHUNK #############################
+		########## COPY CHUNK DATA #######################
 		for safe_path,label_path in chunk:
-			# COPY BANDS
-			sp.run(["cp","-v","-r",f"{S2_DIR}/{safe_path}",WORK_DIR])
+			sp.run(["cp","-v","-r",f"{S2_DIR}/{safe_path}",WORK_DIR]) # COPY BANDS
+			sp.run(["cp","-v",f"{DW_DIR}/{label_path}",WORK_DIR]) # COPY LABEL
 
-			# COPY LABEL
-			sp.run(["cp","-v",f"{LABEL_DIR}/{label_path}.tif",WORK_DIR])
-
-	########## CHIP ####################
-	for i,(safe_path,label_path) in enumerate(chunk):
-		product = Product(safe_path,label_path)
-		chip_image(product,i,len(chunk))
+		########## CHIP ##################################
+		N = len(chunk)
+		for i,(safe_path,label_path) in enumerate(chunk):
+			safe_local_path  = f"{WORK_DIR}/{safe_path.split("/")[-1]}" #remove 'eodata/../'
+			label_local_path = f"{WORK_DIR}/{label_path}"
+			product = Product(safe_local_path,label_local_path)
+			print(f'[{i+1}/{N}] PROCESSING {product.base_id}')		
+			chip_image(product)
