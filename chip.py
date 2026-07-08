@@ -45,6 +45,9 @@ class Product():
 		self.s2_readers = [rio.open(p,'r',tiled=True) for p in self.get_band_paths()]
 		self.dw_reader  = rio.open(self.label_path,'r',tiled=True)
 
+		# check for empty labels
+		# raise exception
+
 		# ALIGN RASTERS
 		self.s2_borders,self.dw_borders = self.align_s2_dw(self.s2_readers[0],self.dw_reader)
 
@@ -55,12 +58,15 @@ class Product():
 
 
 	def get_band_paths(self):
-		date = self.safe_id.split('_')[2]
-		y = date[0:4]
-		m = date[4:6]
-		d = date[6:8]
-		band_regex = f"GRANULE/*/IMG_DATA/R10m/*_10m.jp2"
-		paths = [f"{self.safe_path}/{s}" for s in glob.glob(band_regex,root_dir=self.safe_path)]
+		# date = self.safe_id.split('_')[2]
+		# y = date[0:4]
+		# m = date[4:6]
+		# d = date[6:8]
+		# band_regex = f"GRANULE/*/IMG_DATA/R10m/*_10m.jp2"
+		# paths = [f"{self.safe_path}/{s}" for s in glob.glob(band_regex,root_dir=self.safe_path)]
+		band_regex = f"{self.safe_path}/GRANULE/*/IMG_DATA/R10m/*_B0[2348]_10m.jp2"
+		paths = sorted(glob.glob(band_regex)) # returns B02,B03,B04,B08 -- BGRN 
+		paths = paths[::-1][1:] + [paths[-1]]
 		return paths
 
 
@@ -147,12 +153,13 @@ class Product():
 
 
 
-def get_datastrip_id(str):
+def get_datastrip_id(safe_path):
 	'''
 	Given a string like /*.SAFE/GRANULE/SUBFOLDER, use SUBFOLDER to return
 	datastrip id
 	'''
-	pass
+	subdir = glob.glob("*",root_dir=f"{safe_path}/GRANULE")[0]
+	return subdir.split('_')[-1]
 
 
 
@@ -163,7 +170,7 @@ def get_dw_id(safe_str,datastrip_str):
 	'''
 	# tile  = safe_str[38:44]
 	# date  = safe_str[11:26]
-	tile = safe_str.split('_')[-2]
+	tile = safe_str.split('/')[-1].split('_')[-2]
 	date = safe_str.split('_')[2] #more readable
 	return f"{date}_{datastrip_str}_{tile}.tif"
 
@@ -281,6 +288,8 @@ def chip_image(product):
 		p.join(timeout=60)
 		if p.is_alive():
 			print(f"Worker {i} timed out.")
+			p.terminate()
+			p.join()
 		elif p.exitcode != 0:
 			print(f"Worker {i} exited with code {p.exitcode}")
 
@@ -328,7 +337,7 @@ def chip_image_worker(rgbn,zeros,label_path,s2_windows,dw_windows,base_id,lock):
 
 		# SAVE BANDS
 		row,col = rowcol
-		outfile = f"{base_id}_{row:02}_{col:02}_B0X.tif"
+		outfile = f"{CHIP_DIR}/{base_id}_{row:02}_{col:02}_B0X.tif"
 		r = Image.fromarray(r_array)
 		g = Image.fromarray(g_array)
 		b = Image.fromarray(b_array)
@@ -336,7 +345,7 @@ def chip_image_worker(rgbn,zeros,label_path,s2_windows,dw_windows,base_id,lock):
 		Image.merge('RGBA',(r,g,b,n)).save(outfile)
 
 		# SAVE LABEL
-		outfile = f'{base_id}_{row:02}_{col:02}_LBL.tif'
+		outfile = f"{CHIP_DIR}/{base_id}_{row:02}_{col:02}_LBL.tif"
 		lbl_array[lbl_array!=1] = 0
 		lbl_array[lbl_array==1] = 255 #set positive to 255, negative to 0
 		Image.fromarray(lbl_array).save(outfile)
@@ -345,10 +354,11 @@ def chip_image_worker(rgbn,zeros,label_path,s2_windows,dw_windows,base_id,lock):
 		stats.append(f"{outfile.split('/')[-1]}\t{n_water}")
 
 	# LOG
-	lock.acquire()
-	with open(f'{CHIP_DIR}/stats.txt','a') as fp:
-		fp.write('\n'.join(stats))
-	lock.release()
+	if len(stats) > 0:
+		lock.acquire()
+		with open(f'{CHIP_DIR}/stats.txt','a') as fp:
+			fp.write('\n'.join(stats) + '\n')
+		lock.release()
 
 	# CLEAR
 	lbl_rdr.close()
@@ -423,8 +433,7 @@ if __name__ == '__main__':
 	safe_regex   = "eodata/Sentinel-2/MSI/L2A/*/*/*/*.SAFE"
 	remote_safes = glob.glob(safe_regex,root_dir=S2_DIR) #returns ['/eodata/.../*.SAFE']
 
-	subdirs    = [glob.glob("*",root_dir=f"{s}/GRANULE")[0] for s in remote_safes]
-	datastrips = [s.split('_')[-1] for s in subdirs]
+	datastrips = [get_datastrip_id(s) for s in remote_safes]
 	dw_ids     = [get_dw_id(s,d) for s,d in zip(remote_safes,datastrips)]	
 
 	dw_files     = glob.glob("*.tif",root_dir=DW_DIR) # actual label dir
@@ -461,7 +470,14 @@ if __name__ == '__main__':
 		for i,(safe_path,label_path) in enumerate(chunk):
 			safe_local_path  = f"{WORK_DIR}/{safe_path.split('/')[-1]}" #remove 'eodata/../'
 			label_local_path = f"{WORK_DIR}/{label_path}"
-			product = Product(safe_local_path,label_local_path)
+
+			# LOAD IMAGE PATHS AND READERS
+			try:
+				product = Product(safe_local_path,label_local_path)
+			except e:
+				print(f"Error loading product {safe_local_path}.")
+
+			# CHIP
 			print(f'[{i+1}/{N}] PROCESSING {product.base_id}')	
 			try:
 				chip_image(product)
