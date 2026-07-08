@@ -1,13 +1,12 @@
 '''
-Run a training/validation/split.
+Run a training/validation/testing split.
 
 1.  Testing training/validation split:
-1.1 Choose 3/6 UTM zones at random, without replacement.
-1.2 Choose a tile at random for each of the two UTM zones. This is the test set.
+	1.1 3/6 UTM zones at random, without replacement.
+	1.2 1 tile at random for each UTM zone. This is the test set.
 2.  Validation training split:
-2.1 Of the remaining dataset, choose 3 tiles at random. This is the validation set. 
-2.2 Set the rest as training.
-
+	2.1 Of the remaining, 3 tiles at random. This is the validation set. 
+	2.2 Remainder set as training.
 '''
 import argparse
 import os
@@ -16,12 +15,9 @@ import random
 import glob
 import shutil
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--data-dir',default=None,required=True,
-	help='Dataset directory.')
 
-DEFAULT_SEED = 476
-NR_TILES = 3 #nr for validation and testing
+DEFAULT_SEED = 476 #reproduce what's split.txt
+NR_TILES     = 3   #nr for validation and testing
 
 def build_tree(chip_names):
 	'''
@@ -55,18 +51,21 @@ def build_tree(chip_names):
 	return tree
 
 
-if __name__ == '__main__': #THIS IS ALL EASIER WITH A TREE?
+if __name__ == '__main__':
 
 	#CHECK DIR
+	parser = argparse.ArgumentParser()
+	parser.add_argument('--chip-dir',default=None,required=True,
+		help='Dataset directory.')
 	args = parser.parse_args()
-	assert os.path.isdir(args.data_dir), "split.py: Incorrect data dir argument."
+	assert os.path.isdir(args.chip_dir), "split.py: Incorrect data dir argument."
 
 	#FIX SEEDS
 	np.random.seed(DEFAULT_SEED)
 	random.seed(DEFAULT_SEED)
 
 	#GET CHIP NAMES
-	band_files  = sorted(glob.glob("*_B0X.tif",root_dir=args.data_dir))
+	band_files  = sorted(glob.glob("*_B0X.tif",root_dir=args.chip_dir))
 	chips       = [_[0:-8] for _ in band_files] #19456 X 53
 
 	#TREE
@@ -91,14 +90,17 @@ if __name__ == '__main__': #THIS IS ALL EASIER WITH A TREE?
 	print(f"TEST TILES:       {test_tiles}")
 	print(f"VALIDATION TILES: {validate_tiles}")
 	print(f"TRAIN TILES:      {training_tiles}")
-	with open('../cfg/split_summary.txt','w+') as fp:
+	with open('./split.txt','w+') as fp:
 		fp.write(f"TEST TILES:       {test_tiles}\n")
 		fp.write(f"VALIDATION TILES: {validate_tiles}\n")
 		fp.write(f"TRAIN TILES:      {training_tiles}\n")
 
 	#SAVE IN SEPARATAE FOLDERS
-	data_dir = args.data_dir
-	new_dir = '/'.join([*data_dir.split('/')[0:-1],'chips_sorted'])
+	chip_dir = args.chip_dir
+	if chip_dir[-1] == '/':
+		chip_dir = chip_dir[:-1]
+	# new_dir = '/'.join([*chip_dir.split('/')[0:-1],'chips_sorted'])
+	new_dir = chip_dir + '_sorted'
 	os.mkdir(new_dir)
 	os.mkdir(f'{new_dir}/training')
 	os.mkdir(f'{new_dir}/validation')
@@ -106,26 +108,20 @@ if __name__ == '__main__': #THIS IS ALL EASIER WITH A TREE?
 
 	print("COPYING VALIDATION FILES")
 	for tile in validate_tiles:
-		tile_files = glob.glob(f"*_T{tile}_*.tif",root_dir=args.data_dir)
+		tile_files = glob.glob(f"*_T{tile}_*.tif",root_dir=args.chip_dir)
 		for file in tile_files:
-			shutil.copy(f"{args.data_dir}/{file}",f"{new_dir}/validation/{file}",follow_symlinks=False)
+			shutil.copy(f"{args.chip_dir}/{file}",f"{new_dir}/validation/{file}",follow_symlinks=False)
 
 	print("COPYING TESTING FILES")
 	for tile in test_tiles:
-		tile_files = glob.glob(f"*_T{tile}_*.tif",root_dir=args.data_dir)
+		tile_files = glob.glob(f"*_T{tile}_*.tif",root_dir=args.chip_dir)
 		for file in tile_files:
-			shutil.copy(f"{args.data_dir}/{file}",f"{new_dir}/testing/{file}",follow_symlinks=False)
+			shutil.copy(f"{args.chip_dir}/{file}",f"{new_dir}/testing/{file}",follow_symlinks=False)
 
 	print("COPYING TRAINING FILES")
 	for tile in training_tiles:
-		tile_files = glob.glob(f"*_T{tile}_*.tif",root_dir=args.data_dir)
+		tile_files = glob.glob(f"*_T{tile}_*.tif",root_dir=args.chip_dir)
 		for file in tile_files:
-			shutil.copy(f"{args.data_dir}/{file}",f"{new_dir}/training/{file}",follow_symlinks=False)
+			shutil.copy(f"{args.chip_dir}/{file}",f"{new_dir}/training/{file}",follow_symlinks=False)
 
-	#OLD
-	# all_rasters = np.array([i[0:-11] for i in chips])   #19456 x 42
-	# all_tiles   = np.array([i[-16:-11] for i in chips]) #19456 x 6
-	# all_zones   = np.array([i[-16:-13] for i in chips]) #19456 x 3
-	# c_per_r_str, c_per_r_cnt = np.unique(all_rasters,return_counts=True) #726 x 42
-	# c_per_t_str, c_per_t_cnt = np.unique(all_tiles,return_counts=True)   #21 x 6
-	# c_per_z_str, c_per_z_cnt = np.unique(all_zones,return_counts=True)   #6 x 3
+	

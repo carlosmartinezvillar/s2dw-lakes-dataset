@@ -31,7 +31,18 @@ CHIP_DIR  = None #output dir -- fast,local
 S2_DIR    = None #large storage -- slow
 DW_DIR    = None #large storage -- slow
 
+class EmptyLabelError(Exception):
+	'''
+	Empty DynamicWorld raster.
+	'''
+	pass
+
 class Product():
+	'''
+	Class to keep paths, image readers, and usable area of rasters.
+	1 Product corresponds to a unique image-label pair (Sentinel-2 bands and
+	DynamicWorld image)
+	'''
 	def __init__(self,safe_path,label_path):
 		# Absolute paths
 		self.safe_path  = safe_path #dir
@@ -41,27 +52,27 @@ class Product():
 		self.safe_id = safe_path.split('/')[-1]
 		self.base_id = self.set_chip_base_str()
 
-		# rasterio.DatasetReader
+		# rasterio.DatasetReader for bands and labels
 		self.s2_readers = [rio.open(p,'r',tiled=True) for p in self.get_band_paths()]
 		self.dw_reader  = rio.open(self.label_path,'r',tiled=True)
 
-		# check for empty labels
-		# raise exception
+		# Check empty labels
+		if self.dw_reader.statistics(1).max == 0:
+			raise EmptyLabelError("Label is zero everywhere.")
 
 		# ALIGN RASTERS
 		self.s2_borders,self.dw_borders = self.align_s2_dw(self.s2_readers[0],self.dw_reader)
 
 
 	def set_chip_base_str(self):
+			'''
+			Unique base name for all chips extracted from a product.
+			'''
 			orbit = self.safe_id.split('_')[4]
 			return f"{self.label_path.split('/')[-1][:-4]}_{orbit}"
 
 
 	def get_band_paths(self):
-		# date = self.safe_id.split('_')[2]
-		# y = date[0:4]
-		# m = date[4:6]
-		# d = date[6:8]
 		# band_regex = f"GRANULE/*/IMG_DATA/R10m/*_10m.jp2"
 		# paths = [f"{self.safe_path}/{s}" for s in glob.glob(band_regex,root_dir=self.safe_path)]
 		band_regex = f"{self.safe_path}/GRANULE/*/IMG_DATA/R10m/*_B0[2348]_10m.jp2"
@@ -145,6 +156,9 @@ class Product():
 
 
 	def close(self):
+		'''
+		Close all DatasetReader's
+		'''
 		for reader in self.s2_readers:
 			if not reader.closed:
 				reader.close()
@@ -184,32 +198,32 @@ def get_strided_windows(borders):
 	the blocks are offseted and defined as:
 
 			    left   stride   stride*2
-				| 0 0 ..  	      |
+				| 0 0...  	      |
 				| 0 0... |		  | 
 	top      ---+--------+--------+----
 		    0 0 |        |        |
-		    0 0 | (0, 0) | (0, 1) |
+		    0 0 | (0, 0) | (0, 1) | ...
 		     .  |        |        |
 	stride*1 .  +--------+--------+
 		     .  |        |        |
-		        | (1, 0) | (1, 1) |
+		        | (1, 0) | (1, 1) | ...
 		        |        |        |
 	stride*2 ---+--------+--------+---
-				|                 |
+				|  ...   |   ...  |
 
 
 	Parameters
 	----------
 	borders: dict
-		The dictionary containing the first and last indices of usable data in
-		both directions.
+		The dictionary containing the first and last indices of usable data.
 
 	Returns
 	-------
 	List of [(str,str),Window]. Window object is arg to .read() method in 
-	rasterio.DatasetReader.read(). Indices i,j are row,col in original raster.
-
+	rasterio.DatasetReader. Indices i,j are row,col position of chip in the 
+	original raster.
 	'''	
+
 	# number of pixel rows and cols within borders
 	n_px_rows = borders['bottom'] + 1 - borders['top']
 	n_px_cols = borders['right'] + 1 - borders['left']
@@ -233,6 +247,16 @@ def get_strided_windows(borders):
 
 
 def chip_image(product):
+	'''
+	Process a Sentinel-2 product and its corresponding DynamicWorld V1 product.
+	This is done through these steps:
+	1. Clip rgb-nir bands at 99th percentile, set to 255.
+	2. Divide the arrays into windows
+	3. Divide windows into to multiple sections
+	4. Assign each section to a separate process.
+
+	Each process calls chip_image_worker().
+	'''
 
 	# STDOUT
 	start_time = time.perf_counter()
@@ -254,6 +278,11 @@ def chip_image(product):
 		zero_mask   = band_array == 0
 		high_cutoff = int(np.percentile(band_array[~zero_mask],99))
 		low_cutoff  = 0
+
+		if high_cutoff <= low_cutoff: #avoid division by zero
+			print(f"Degenerate band range in {reader.files[0]} -- SKIPPING.")
+			return
+
 		band_array  = np.clip(band_array,low_cutoff,high_cutoff)
 		band_array  = np.round((band_array-low_cutoff)/(high_cutoff-low_cutoff)*255)
 		band_array  = band_array.astype(np.uint8)
@@ -300,7 +329,13 @@ def chip_image(product):
 
 
 def chip_image_worker(rgbn,zeros,label_path,s2_windows,dw_windows,base_id,lock):
-
+	'''
+	Function for worker processes.
+	Checks both no-data and water-land ratio.
+	Stores 4 bands as *_B0X.tif file, where alpha channel is NIR band (band 8).
+	Stores label as 0 or 255 values for land and water respectively.
+	Number of water pixels per chip is written to stats.txt.
+	'''
 	# Label DatasetReader -- per thread
 	lbl_rdr = rio.open(label_path,'r',tiled=True)
 
@@ -400,8 +435,8 @@ def parse_args():
 		WORK_DIR = WORK_DIR.rstrip('/')
 
 	if CHIP_DIR is None:
-		os.makedirs(WORK_DIR + '/chips',exist_ok=True)
-		CHIP_DIR = WORK_DIR + '/chips'
+		os.makedirs(f"{WORK_DIR}/chips_{CHIP_SIZE}",exist_ok=True)
+		CHIP_DIR = f"{WORK_DIR}/chips_{CHIP_SIZE}"
 	if not os.path.isdir(CHIP_DIR):
 		print(f"CHIP_DIR in {CHIP_DIR} not found. EXIT(1).")
 		sys.exit(1)
@@ -458,7 +493,8 @@ if __name__ == '__main__':
 
 
 	########## BATCH PROCESS #########################
-	for chunk in chunk_queue:
+	for j,chunk in enumerate(chunk_queue):
+		print(f"[BATCH {j+1}/{len(chunk_queue)}]")
 
 		########## COPY CHUNK DATA #######################
 		for safe_path,label_path in chunk:
@@ -474,12 +510,14 @@ if __name__ == '__main__':
 			# LOAD IMAGE PATHS AND READERS
 			try:
 				product = Product(safe_local_path,label_local_path)
-			except e:
-				print(f"Error loading product {safe_local_path}.")
+			except Exception as e:
+				print(f"Error in Product.__init__() for {safe_local_path}.")
+				print(f"Error: {e}")
+				continue
 
 			# CHIP
-			print(f'[{i+1}/{N}] PROCESSING {product.base_id}')	
 			try:
+				print(f'[{i+1}/{N}] PROCESSING {product.base_id}')	
 				chip_image(product)
 			finally:
 				product.close()

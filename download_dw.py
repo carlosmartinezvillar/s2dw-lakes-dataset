@@ -12,6 +12,7 @@ import glob
 # import subprocess as sp
 
 S2_DIR = None
+DRIVE_FOLDER = "DW_LABELS"
 
 def get_gee_id(safe_path:str) -> str:
 	'''
@@ -77,7 +78,7 @@ def create_task(ee_image:ee.Image, ee_id:str, s2_rdr:rio.io.DatasetReader) -> ee
 	task = ee.batch.Export.image.toDrive(
 		image=ee_image,
 		description=ee_id,
-		folder="DW_LABELS",
+		folder=DRIVE_FOLDER,
 		fileNamePrefix=ee_id,
 		scale=10,
 		crs=s2_crs,

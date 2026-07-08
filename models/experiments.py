@@ -6,6 +6,7 @@ import json
 import argparse
 import os
 import numpy as np
+import random
 
 
 def set_seed(seed: int):
@@ -17,9 +18,9 @@ def set_hyperparameters(name):
 	'''
 	Set combinations of hyperparameters.
 	'''
-	# LEARNING RATE, BATCH SIZE, WEIGHT DECAY
+	# STAGE 1 -- LEARNING RATE, BATCH SIZE, WEIGHT DECAY
 	if name == 'stage_1':
-		n_trials = 30
+		n_trials = 40
 		seed       = 476
 		epochs     = 25
 		scheduler  = "cos"
@@ -29,7 +30,8 @@ def set_hyperparameters(name):
 		vit_layers = 1 #base
 		cnn_layers = 2 #base
 		channels   = 32 #base
-		model      = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
+		mlp_ratios = 4
+		models     = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
 
 		rows = []
 
@@ -47,10 +49,16 @@ def set_hyperparameters(name):
 					'seed':476,
 					'epochs':25,
 					'scheduler':"cos",
+					'eta_min':0.0,
+					'cycles': 1,
 					'loss':"ce",
 					'bands':3,
 					'labels':2,
+					'lrate':round(lrate[j],5),
+					'decay':round(decay[j],5),
+					'batch':int(batch[j]),					
 					'vit_layers':1, #base
+					'mlp_ratios':4, #base
 					'cnn_layers':2, #base
 					'channels':32   #base
 				}
@@ -58,49 +66,135 @@ def set_hyperparameters(name):
 				rows.append(sample)
 
 
-	# ARCHITECTURE VARIATIONS: CHANNELS x DEPTH SIZE
+	# STAGE 2 -- ARCHITECTURE VARIATIONS: CHANNELS x DEPTH SIZE
 	if name == 'stage_2':
 		seed   = 476
 		epochs = 50
-		lrate = [] #best from 'learning_rates'
-		decay = [] #best from 'learning_rates'
+		scheduler  = "cos"
+		loss_func  = "ce"
+		bands      = 3
+		labels     = 2
 
-		models ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
-		vit_layers = [1,2]
-		# cnn_layers = [2,3]
-		channels   = [16,32]
-		# mlp_ratios = [2,4]
+		lrate = [] #best from stage 1
+		decay = [] #best from stage 1
+		batch = [] #best from stage 1
+
+		models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
+		cnn_layers = [2,3] # follows vit_layers = [1,2]
+		channels   = [16,32] # follows mlp_ratios = [2,4]
+		
+		# Cross-product
+		cross_product = list(itertools.product(models,channels,cnn_layers))
+		rows = []
+
+		for i in range(len(cross_product)):
+			model = cross_product[i][0]
+			channels = cross_product[i][1]
+			cnn_layers = cross_product[i][2]
+
+			if channels == 32:
+				mlp_ratios = 4
+			else:
+				mlp_ratios = 2
+
+			if cnn_layers == 3:
+				vit_layers = 2
+			else:
+				vit_layers = 1
+
+			sample = {
+				'id':i,
+				'model':model,
+				'seed':476,
+				'epochs':50,
+				'scheduler':"cos",
+				'eta_min':0.0,
+				'cycles': 1,
+				'loss':"ce",
+				'bands':3,
+				'labels':2,
+				'lrate':0, #missing
+				'decay':0, #missing
+				'batch':8, #missing
+				'vit_layers':vit_layers,
+				'mlp_ratios':mlp_ratios,
+				'cnn_layers':cnn_layers, 
+				'channels':channels  
+			}
+			rows.append(sample)
+
+
+	# STAGE 3 -- CHECK SCHEDULER
+	if name == 'stage_3':
+		models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
+		all_eta_min = [0.0,1e-6,1e-5]
+		all_cycles  = [1,2,3]
 
 		# Cross-product
-		cross_product = list(itertools.product())
-		HP_NEW = []
-
-		for i in range(len(hp)):
-			row_dict = {}
-			row_dict["ID"]            = i
-			row_dict["SEED"]          = hp[i][0]
-			row_dict["EPOCHS"]        = hp[i][1]		
-			row_dict["LEARNING_RATE"] = hp[i][2]
-			row_dict["SCHEDULER"]     = hp[i][3]
-			row_dict["OPTIM"]         = hp[i][4]
-			row_dict["DECAY"]         = hp[i][5]
-			row_dict["LOSS"]          = hp[i][6]
-			row_dict["BATCH"]         = hp[i][7]
-			row_dict["INIT"]          = hp[i][8]
-			row_dict["BANDS"]         = hp[i][9]
-			row_dict["OUTPUTS"]       = hp[i][10]
-			row_dict["MODEL"]         = hp[i][11]
-			HP_NEW.append(row_dict)
+		cross_product = list(itertools.product(models,all_eta_min,all_cycles))
 
 
-	if name == 'stage_3':
-		# eta_min: [0.0,1e-6,1e-5]
-		# cycles: [1,2,3]
-		pass
+		rows = []
+		for i,combination in enumerate(cross_product):
+
+			model   = combination[0]
+			eta_min = combination[1]
+			cycles  = combination[2]
+
+			sample = {
+				'id':i,
+				'model':model,
+				'seed':476,
+				'epochs':50,
+				'scheduler':"cos",
+				'eta_min':eta_min,
+				'cycles': cycles,
+				'loss':"ce",
+				'bands':3,
+				'labels':2,
+				'lrate':0, #missing -- stage 1
+				'decay':0, #missing
+				'batch':8, #missing
+				'vit_layers':1, #missing -- stage 2
+				'mlp_ratios':4, #missing
+				'cnn_layers':2,  #missing
+				'channels':32 #missing  
+			}
+			rows.append(sample)
 
 
+	# STAGE 4 -- CNN STEM+PATCHING VS PREVIOUS
+	if name == 'stage_4':
+		models = ["UNet_ViT2_CNN","UNet_ViT2_ViT"]
+
+		rows = []
+
+		for i,m in enumerate(models):
+			sample = {
+				'id':i,
+				'model':m,
+				'seed':476,
+				'epochs':50,
+				'scheduler':"cos",
+				'eta_min':0.0, #missing -- stage 3
+				'cycles': 1, #missing -- stage 3
+				'loss':"ce",
+				'bands':3,
+				'labels':2,
+				'lrate':0, #missing -- stage 1
+				'decay':0, #missing
+				'batch':8, #missing
+				'vit_layers':1, #missing -- stage 2
+				'mlp_ratios':4,
+				'cnn_layers':2, 
+				'channels':32  
+			}
+			rows.append(sample)
+
+
+	# WRITE FILE
 	out_file_path = f"./hparams/{name}.json"		
-	assert not os.path.isfile(out_file_path), f"Overwriting existing file {out_file_path}"
+	# assert not os.path.isfile(out_file_path), f"Overwriting existing file {out_file_path}"
 	with open(out_file_path,'w') as fp:
 		for line in rows:
 			json.dump(line,fp)
@@ -109,10 +203,8 @@ def set_hyperparameters(name):
 
 
 if __name__ == '__main__':
-
 	set_seed(476)
-	# exp2 = 'stem_check'
-
 	set_hyperparameters('stage_1')
-	# sequence_hyperparameters(out_file_path,id_start=101,trial=1)		
-	# sequence_hyperparameters(out_file_path,id_start=421,trial=2)
+	set_hyperparameters('stage_2')
+	set_hyperparameters('stage_3')
+	set_hyperparameters('stage_4')
