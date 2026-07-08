@@ -1,6 +1,4 @@
 '''
-split.py
---------
 Run a training/validation/split.
 
 1.  Testing training/validation split:

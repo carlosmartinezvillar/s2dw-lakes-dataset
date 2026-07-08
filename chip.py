@@ -51,7 +51,7 @@ class Product():
 
 	def set_chip_base_str(self):
 			orbit = self.safe_id.split('_')[4]
-			return f"{self.label_path.split('/')[-1].rstrip('.tif')}_{orbit}"
+			return f"{self.label_path.split('/')[-1][:-4]}_{orbit}"
 
 
 	def get_band_paths(self):
@@ -64,7 +64,7 @@ class Product():
 		return paths
 
 
-	def align_s2_dw(self,s2_src:rio.DatasetReader,dw_src:rio.DatasetReader) -> Tuple:
+	def align_s2_dw(self,s2_src,dw_src):
 		'''
 		Match indices and remove borders.
 		'''
@@ -138,12 +138,22 @@ class Product():
 		return s2_ij,dw_ij	
 
 
+	def close(self):
+		for reader in self.s2_readers:
+			if not reader.closed:
+				reader.close()
+		if not self.dw_reader.closed:
+			self.dw_reader.close()
+
+
+
 def get_datastrip_id(str):
 	'''
 	Given a string like /*.SAFE/GRANULE/SUBFOLDER, use SUBFOLDER to return
 	datastrip id
 	'''
 	pass
+
 
 
 def get_dw_id(safe_str,datastrip_str):
@@ -158,7 +168,8 @@ def get_dw_id(safe_str,datastrip_str):
 	return f"{date}_{datastrip_str}_{tile}.tif"
 
 
-def get_strided_windows(borders:dict) -> [Tuple]:
+
+def get_strided_windows(borders):
 	'''
 	Given a dicts of boundaries, returns an array list with tuples (i,j) for block indices i,j and 
 	window objects corresponding to the block i,j. This considers only the usable area of the raster,
@@ -208,9 +219,10 @@ def get_strided_windows(borders:dict) -> [Tuple]:
 		row_start = i * STRIDE + borders['top']
 		col_start = j * STRIDE + borders['left']
 		W = Window(col_start,row_start,CHIP_SIZE,CHIP_SIZE)
-		windows += [[(str(i),str(j)),W]]
+		windows += [[(i,j),W]]
 
 	return windows
+
 
 
 def chip_image(product):
@@ -277,10 +289,14 @@ def chip_image(product):
 	print(f"All workers done ({exec_time:.3f} secs). ")
 
 
+
 def chip_image_worker(rgbn,zeros,label_path,s2_windows,dw_windows,base_id,lock):
 
 	# Label DatasetReader -- per thread
 	lbl_rdr = rio.open(label_path,'r',tiled=True)
+
+	# Single zero mask
+	zero_stack = np.any(zeros,axis=0)
 
 	# CHIP INFO
 	stats = []
@@ -295,12 +311,12 @@ def chip_image_worker(rgbn,zeros,label_path,s2_windows,dw_windows,base_id,lock):
 			continue
 
 		# CHECK WATER/LAND RATIO
-		n_water = (lbl_arr==1).sum()
+		n_water = (lbl_array==1).sum()
 		if n_water < WATER_MIN or n_water > WATER_MAX:
 			continue
 
 		# CHECK RGB-NIR NO DATA
-		zero_window = zeros[w.row_off:w.row_off+CHIP_SIZE, w.col_off:w.col_off+CHIP_SIZE]
+		zero_window = zero_stack[w.row_off:w.row_off+CHIP_SIZE, w.col_off:w.col_off+CHIP_SIZE]
 		if zero_window.sum() > 0:
 			continue
 
@@ -321,18 +337,22 @@ def chip_image_worker(rgbn,zeros,label_path,s2_windows,dw_windows,base_id,lock):
 
 		# SAVE LABEL
 		outfile = f'{base_id}_{row:02}_{col:02}_LBL.tif'
-		lbl_arr[lbl_arr!=1] = 0
-		lbl_arr[lbl_arr==1] = 255 #set positive to 255, negative to 0
+		lbl_array[lbl_array!=1] = 0
+		lbl_array[lbl_array==1] = 255 #set positive to 255, negative to 0
 		Image.fromarray(lbl_array).save(outfile)
 
 		# STATS/LOG
-		stats.append(f'{outfile.split('/')[-1]}\t{n_water}')
+		stats.append(f"{outfile.split('/')[-1]}\t{n_water}")
 
 	# LOG
 	lock.acquire()
 	with open(f'{CHIP_DIR}/stats.txt','a') as fp:
 		fp.write('\n'.join(stats))
 	lock.release()
+
+	# CLEAR
+	lbl_rdr.close()
+
 
 
 def parse_args():
@@ -361,7 +381,7 @@ def parse_args():
 	WORK_DIR = args.work_dir
 	CHIP_DIR = args.chip_dir
 	S2_DIR   = args.s2_dir 
-	DW_DIR   = args.label_dir
+	DW_DIR   = args.dw_dir
 
 	if not os.path.isdir(WORK_DIR):
 		print(f"WORK_DIR {WORK_DIR} not found. EXIT(1).")
@@ -382,16 +402,17 @@ def parse_args():
 	if S2_DIR[-1] == '/':
 		S2_DIR = S2_DIR.rstrip('/')
 
-	if not os.path.isdir(LABEL_DIR):
+	if not os.path.isdir(DW_DIR):
 		print("LABEL_DIR not found. EXIT(1).")
 		sys.exit(1)
-	if LABEL_DIR[-1] == '/':
-		LABEL_DIR = LABEL_DIR.rstrip('/')
+	if DW_DIR[-1] == '/':
+		DW_DIR = DW_DIR.rstrip('/')
 
 	print(f"WORK_DIR set to: {WORK_DIR}")
 	print(f"CHIP_DIR set to: {CHIP_DIR}")
 	print(f"S2_DIR set to:   {S2_DIR}")
 	print(f"DW_DIR set to:   {DW_DIR}")	
+
 
 
 if __name__ == '__main__':
@@ -402,14 +423,14 @@ if __name__ == '__main__':
 	safe_regex   = "eodata/Sentinel-2/MSI/L2A/*/*/*/*.SAFE"
 	remote_safes = glob.glob(safe_regex,root_dir=S2_DIR) #returns ['/eodata/.../*.SAFE']
 
-	subdirs    = [glob.glob("*",root_dir=f"{s}/GRANULE")[0] for s in safes]
+	subdirs    = [glob.glob("*",root_dir=f"{s}/GRANULE")[0] for s in remote_safes]
 	datastrips = [s.split('_')[-1] for s in subdirs]
-	dw_ids     = [get_gee_id(s,d) for s,d in zip(remote_safes,datastrips)]	
+	dw_ids     = [get_dw_id(s,d) for s,d in zip(remote_safes,datastrips)]	
 
 	dw_files     = glob.glob("*.tif",root_dir=DW_DIR) # actual label dir
 	intersection = np.isin(dw_ids,dw_files)
-	good_safes   = remote_safes[intersection]
-	good_labels  = dw_ids[intersection] #match order
+	good_safes   = np.array(remote_safes)[intersection]
+	good_labels  = np.array(dw_ids)[intersection] #match order
 
 
 	########## SPLIT AND QUEUE ################
@@ -438,15 +459,18 @@ if __name__ == '__main__':
 		########## CHIP ##################################
 		N = len(chunk)
 		for i,(safe_path,label_path) in enumerate(chunk):
-			safe_local_path  = f"{WORK_DIR}/{safe_path.split("/")[-1]}" #remove 'eodata/../'
+			safe_local_path  = f"{WORK_DIR}/{safe_path.split('/')[-1]}" #remove 'eodata/../'
 			label_local_path = f"{WORK_DIR}/{label_path}"
 			product = Product(safe_local_path,label_local_path)
-			print(f'[{i+1}/{N}] PROCESSING {product.base_id}')		
-			chip_image(product)
+			print(f'[{i+1}/{N}] PROCESSING {product.base_id}')	
+			try:
+				chip_image(product)
+			finally:
+				product.close()
 
 		########## DELETE CHUNK DATA #####################
 		for safe_path,label_path in chunk:
-			safe_local_path  = f"{WORK_DIR}/{safe_path.split("/")[-1]}" #remove 'eodata/../'
+			safe_local_path  = f"{WORK_DIR}/{safe_path.split('/')[-1]}" #remove 'eodata/../'
 			label_local_path = f"{WORK_DIR}/{label_path}"
 			shutil.rmtree(safe_local_path)
 			os.remove(label_local_path)
