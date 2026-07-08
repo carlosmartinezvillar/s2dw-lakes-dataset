@@ -54,6 +54,7 @@ def set_hyperparameters(name):
 					'loss':"ce",
 					'bands':3,
 					'labels':2,
+					'optim':"adamw",
 					'lrate':round(lrate[j],5),
 					'decay':round(decay[j],5),
 					'batch':int(batch[j]),					
@@ -113,6 +114,7 @@ def set_hyperparameters(name):
 				'loss':"ce",
 				'bands':3,
 				'labels':2,
+				'optim':"adamw",
 				'lrate':0, #missing
 				'decay':0, #missing
 				'batch':8, #missing
@@ -152,6 +154,7 @@ def set_hyperparameters(name):
 				'loss':"ce",
 				'bands':3,
 				'labels':2,
+				'optim':"adamw",
 				'lrate':0, #missing -- stage 1
 				'decay':0, #missing
 				'batch':8, #missing
@@ -181,6 +184,7 @@ def set_hyperparameters(name):
 				'loss':"ce",
 				'bands':3,
 				'labels':2,
+				'optim':"adamw",
 				'lrate':0, #missing -- stage 1
 				'decay':0, #missing
 				'batch':8, #missing

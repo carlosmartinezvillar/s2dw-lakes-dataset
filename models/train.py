@@ -17,34 +17,11 @@ import dataloader
 # SET GLOBAL VARS FROM ENV OR ARGS
 ####################################################################################################
 # __spec__ = None # DEBUG with tqdm -- temp.
-
-parser = argparse.ArgumentParser()
-
-required = parser.add_argument_group('Required arguments')
-required.add_argument('--data-dir',required=True,
-	help='Input dataset directory.')
-required.add_argument('--net-dir',required=True,
-	help='Output directory for trained model weights.')
-required.add_argument('--log-dir',required=True,default=None,
-	help='Training logs.')
-required.add_argument('-p','--params',required=True,default=None,
-	help='Path to JSON hyperparameter file.')
-required.add_argument('--id',required=True,type=int,default=0,
-	help='Model id number in JSON hyperparameter file.')
-
-optional = parser.add_argument_group('Optional arguments')
-optional.add_argument('--gpu',required=False,type=int,default=0,
-	help='GPU id to train in, if different than 0. Useful to select a gpu in a multi-gpu machine.')
-optional.add_argument('--full',required=False,action='store_true',default=False,
-	help='Train on both training and validation sets (training final model).')
-
-
-args = parser.parse_args()
-
-DATA_DIR  = args.data_dir
-LOG_DIR   = args.log_dir
-MODEL_DIR = args.net_dir
+DATA_DIR  = None
+LOG_DIR   = None
+MODEL_DIR = None
 CUDA_DEV  = None
+
 
 ####################################################################################################
 # CLASSES
@@ -62,7 +39,7 @@ class Logger():
 		self.n_classes = n_classes
 
 		header = ['tloss','vloss']
-		per_class = ('tacc','tiou','vacc','vtpr','vppv','viou')
+		per_class = ('tacc','ttpr','tppv','tiou','vacc','vtpr','vppv','viou')
 		for prefix in per_class:
 			header += [f'{prefix}{c}' for c in range(n_classes)]
 
@@ -91,11 +68,48 @@ class Logger():
 ####################################################################################################
 # SOME HELPER FUNCTIONS
 ####################################################################################################
-def check_scheduler():
+def parse_args():
+	parser = argparse.ArgumentParser()
+
+	required = parser.add_argument_group('Required arguments')
+	required.add_argument('--data-dir',required=True,
+		help='Input dataset directory.')
+	required.add_argument('--net-dir',required=True,
+		help='Output directory for trained model weights.')
+	required.add_argument('--log-dir',required=True,
+		help='Training logs.')
+	required.add_argument('-p','--params',required=True,
+		help='Path to JSON hyperparameter file.')
+	required.add_argument('--id',required=True,type=int,
+		help='Model id number in JSON hyperparameter file.')
+
+	optional = parser.add_argument_group('Optional arguments')
+	optional.add_argument('--gpu',required=False,type=int,default=0,
+		help='GPU id to train in, if different than 0. Useful to select a gpu in a multi-gpu machine.')
+	optional.add_argument('--full',required=False,action='store_true',default=False,
+		help='Train on both training and validation sets (training final model).')
+
+
+	args = parser.parse_args()
+
+	global DATA_DIR
+	global LOG_DIR
+	global MODEL_DIR
+	# global CUDA_DEV
+	DATA_DIR  = args.data_dir
+	LOG_DIR   = args.log_dir
+	MODEL_DIR = args.net_dir
+	# CUDA_DEV  = None	
+
+	return args
+
+
+def check_scheduler(scheduler):
 	for epoch in range(10):
 	    print(f"Epoch {epoch}: LR = {scheduler.get_last_lr()[0]}")
 	    # Execute optimizer.step() simulation
 	    scheduler.step()
+
 
 def save_checkpoint(path,model,optim,scaler,epoch,t_loss,v_loss,best=False):
 	'''
@@ -325,14 +339,14 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 
 		# RESULTS
 		logger.log({'tloss': loss_tr, 'vloss': loss_va,
-			'tacc': tr_acc, 'tiou': tr_iou, 'vacc': va_acc,
-			'vtpr': va_tpr, 'vppv': va_ppv, 'viou': va_iou})
+			'tacc': tr_acc, 'ttpr':tr_tpr,'tppv':tr_ppv,'tiou': tr_iou, 
+			'vacc': va_acc, 'vtpr': va_tpr, 'vppv': va_ppv, 'viou': va_iou})
 
 		# SAVE MODEL
 		if n_classes > 2:
 			epoch_iou = va_iou.mean().item() #mIoU for 3+ classes
 		else:
-			epoch_iou = va_iou[1] #true label iou for 2 classes
+			epoch_iou = va_iou[1].item() #true label iou for 2 classes
 
 		if best_iou < epoch_iou:
 			best_iou   = epoch_iou
@@ -345,6 +359,9 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 
 if __name__ == "__main__":
 
+	#----------- ARGV -------------
+	args = parse_args()
+
 	#---------- LOAD AND PARSE HYPERPARAMETER DICT ------------------------------------------------
 	assert os.path.isfile(args.params), "INCORRECT JSON FILE PATH"
 	with open(args.params,'r') as fp:
@@ -352,7 +369,7 @@ if __name__ == "__main__":
 	assert len(HP_LIST) > 0, "GOT EMPTY JSON FILE."
 
 	# SEARCH BY ID
-	hp_list_indexed = {row['ID']:row for row in HP_LIST}
+	hp_list_indexed = {row['id']:row for row in HP_LIST}
 	assert args.id in hp_list_indexed, f"MODEL ID '{args.id}' NOT IN HYPERPARAMETER FILE."
 	HP = hp_list_indexed[args.id]
 
@@ -366,43 +383,41 @@ if __name__ == "__main__":
 		CUDA_DEV = torch.device("cpu") 
 
 	#---------- SET ALL SEEDS ----------------------------------------------------------------------
-	assert HP['SEED'] in (0,1), "INCORRECT SEED VALUE IN JSON HYPEPARAMETER DICT."
-	if HP['SEED'] == True:
-		set_seed(476)
+	set_seed(HP['seed'])
 
 	#---------- INPUT BANDS -----------------------------------------------------------------------
-	assert HP['BANDS'] in [3,4],"INCORRECT BAND NR IN JSON HYPERPARAMETER DICT."
-	n_bands = HP['BANDS']
+	assert HP['bands'] in [3,4],"INCORRECT BAND NR IN JSON HYPERPARAMETER DICT."
+	n_bands = HP['bands']
 
 	#---------- OUTPUT CHANNELS -------------------------------------------------------------------
-	assert HP['OUTPUTS'] in [2,3], "INCORRECT # OF CLASSES SET IN JSON HYPERPARAMETER DICT."
-	n_classes = HP['OUTPUTS']
+	assert HP['labels'] in [2,3], "INCORRECT # OF CLASSES SET IN JSON HYPERPARAMETER DICT."
+	n_classes = HP['labels']
 
 	#---------- MODEL -----------------------------------------------------------------------------
 	model_classes = [name for name,obj in inspect.getmembers(models,inspect.isclass)]
-	assert HP['MODEL'] in model_classes, "INCORRECT MODEL STRING IN HYPERPARAMETER DICT"
-	net = eval(f"models.{HP['MODEL']}({HP['ID']},{n_bands},{n_classes})")
+	assert HP['model'] in model_classes, "INCORRECT MODEL STRING IN HYPERPARAMETER DICT"
+	net = eval(f"models.{HP['model']}({HP['id']},{n_bands},{n_classes})")
 	net = net.to(CUDA_DEV)
 	net = torch.compile(net)
 
 	#---------- LOSS ------------------------------------------------------------------------------
-	assert HP['LOSS'] in ["ce","ew","cw"], "INCORRECT STRING FOR LOSS IN DICT."
-	if HP['LOSS'] == "ce":
+	assert HP['loss'] in ["ce","ew","cw"], "INCORRECT STRING FOR LOSS IN DICT."
+	if HP['loss'] == "ce":
 		loss_fn = torch.nn.CrossEntropyLoss()
-	if HP['LOSS'] == "ew":
+	if HP['loss'] == "ew":
 		loss_fn = None
-	if HP['LOSS'] == "cw": #<<< --- Useful later...
+	if HP['loss'] == "cw": #<<< --- Useful later...
 		loss_fn = None
 
 	#---------- OPTIMIZER -------------------------------------------------------------------------
-	assert HP["OPTIM"] in ["adam","sgd","adamw"], "INCORRECT STRING FOR OPTIMIZER IN DICT."
-	if HP['OPTIM'] == "adam":
-		optimizer = torch.optim.Adam(net.parameters(),lr=HP['LEARNING_RATE'])
-	if HP['OPTIM'] == "sgd":
-		optimizer = torch.optim.SGD(net.parameters(),lr=HP['LEARNING_RATE'])
-	if HP['OPTIM'] == 'adamw':
-		optimizer = torch.optim.AdamW(net.parameters(),lr=HP['LEARNING_RATE'],
-			weight_decay=HP["DECAY"])
+	assert HP['optim'] in ["adam","sgd","adamw"], "INCORRECT STRING FOR OPTIMIZER IN DICT."
+	if HP['optim'] == "adam":
+		optimizer = torch.optim.Adam(net.parameters(),lr=HP['lrate'])
+	if HP['optim'] == "sgd":
+		optimizer = torch.optim.SGD(net.parameters(),lr=HP['lrate'])
+	if HP['optim'] == 'adamw':
+		optimizer = torch.optim.AdamW(net.parameters(),lr=HP['lrate'],
+			weight_decay=HP["decay"])
 
 	#---------- DATALOADERS ------------------------------------------------------------------------
 	transform = v2.Compose([
@@ -423,7 +438,7 @@ if __name__ == "__main__":
 	dataloaders = {
 		'training': torch.utils.data.DataLoader(
 			tr_dataset,
-			batch_size=HP['BATCH'],
+			batch_size=HP['batch'],
 			drop_last=False,
 			shuffle=True,
 			num_workers=4,
@@ -431,7 +446,7 @@ if __name__ == "__main__":
 			prefetch_factor=10),
 		'validation': torch.utils.data.DataLoader(
 			va_dataset,
-			batch_size=HP['BATCH'],
+			batch_size=HP['batch'],
 			drop_last=False,
 			shuffle=False,
 			num_workers=4,
@@ -442,12 +457,12 @@ if __name__ == "__main__":
 
 	#---------- LEARNING RATE SCHEDULER ------------------------------------------------------------
 	warmup_steps = 5
-	if HP['SCHEDULER'] == "cos":
-		cosine_steps     = HP['EPOCHS'] - warmup_steps
+	if HP['scheduler'] == "cos":
+		cosine_steps     = HP['epochs'] - warmup_steps
 		warmup_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer,start_factor=1e-8,end_factor=1.0,total_iters=warmup_steps)
 		cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer,T_0=cosine_steps,T_mult=1,eta_min=0.0)
 		scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer,schedulers=[warmup_scheduler,cosine_scheduler],milestones=[warmup_steps])
-	if HP['SCHEDULER'] == "none":
+	if HP['scheduler'] == "none":
 		scheduler = None
 
 
@@ -458,6 +473,6 @@ if __name__ == "__main__":
 		optimizer,
 		loss_fn,
 		scheduler,
-		HP['EPOCHS'],
+		HP['epochs'],
 		n_classes
 	)

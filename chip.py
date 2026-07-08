@@ -22,12 +22,17 @@ STRIDE    = 256
 WATER_MIN = 256*256//4
 WATER_MAX = 256*256 - WATER_MIN
 
-# Multiprocessing config
-N_PROC    = 8
+# Default raster properties
+RASTER_SIZE = 10980
+OVERLAP_MIN = 492
+OVERLAP_MAX = RASTER_SIZE - 492
 
-# Set by argparse
+# Multiprocessing settings
+N_PROC = 8
+
+# Globals set by argparse
 WORK_DIR  = None #temp for s2,dw -- fast,local
-CHIP_DIR  = None #output dir -- fast,local
+CHIP_DIR  = None #output folder -- fast,local
 S2_DIR    = None #large storage -- slow
 DW_DIR    = None #large storage -- slow
 
@@ -36,6 +41,8 @@ class EmptyLabelError(Exception):
 	Empty DynamicWorld raster.
 	'''
 	pass
+
+
 
 class Product():
 	'''
@@ -65,19 +72,22 @@ class Product():
 
 
 	def set_chip_base_str(self):
-			'''
-			Unique base name for all chips extracted from a product.
-			'''
-			orbit = self.safe_id.split('_')[4]
-			return f"{self.label_path.split('/')[-1][:-4]}_{orbit}"
+		'''
+		Unique base name for all chips extracted from a product.
+		'''
+		orbit = self.safe_id.split('_')[4]
+		return f"{self.label_path.split('/')[-1][:-4]}_{orbit}"
 
 
 	def get_band_paths(self):
+		'''
+		Get paths for individual .jp2 band files within *.SAFE folder
+		'''
 		# band_regex = f"GRANULE/*/IMG_DATA/R10m/*_10m.jp2"
 		# paths = [f"{self.safe_path}/{s}" for s in glob.glob(band_regex,root_dir=self.safe_path)]
 		band_regex = f"{self.safe_path}/GRANULE/*/IMG_DATA/R10m/*_B0[2348]_10m.jp2"
 		paths = sorted(glob.glob(band_regex)) # returns B02,B03,B04,B08 -- BGRN 
-		paths = paths[::-1][1:] + [paths[-1]]
+		paths = paths[::-1][1:] + [paths[-1]] # <----------------------------------------- CHECK ORDER!
 		return paths
 
 
@@ -131,7 +141,7 @@ class Product():
 		s2_ij['top'],s2_ij['left']     = s2_src.index(dw_xy_ul[0],dw_xy_ul[1],op=math.floor)
 		s2_ij['bottom'],s2_ij['right'] = s2_src.index(dw_xy_lr[0],dw_xy_lr[1],op=math.floor)
 
-		########## 3.REMOVE S2 TILE OVERLAP & ADJUST DW ACCORDINGLY ##########
+		########## 3.REMOVE S2 TILE OVERLAP & MATCH DW ##########
 		if s2_ij['top'] < 492: #shift top border down
 			delta        = 492 - s2_ij['top']
 			s2_ij['top'] = 492
@@ -152,6 +162,7 @@ class Product():
 			s2_ij['right'] = 10487		
 			dw_ij['right'] = dw_ij['right'] - delta
 
+		# Return two dicts
 		return s2_ij,dw_ij	
 
 
@@ -496,7 +507,7 @@ if __name__ == '__main__':
 	for j,chunk in enumerate(chunk_queue):
 		print(f"[BATCH {j+1}/{len(chunk_queue)}]")
 
-		########## COPY CHUNK DATA #######################
+		########## COPY DATA IN CHUNK ####################
 		for safe_path,label_path in chunk:
 			sp.run(["cp","-v","-r",f"{S2_DIR}/{safe_path}",WORK_DIR]) # COPY BANDS
 			sp.run(["cp","-v",f"{DW_DIR}/{label_path}",WORK_DIR]) # COPY LABEL
@@ -526,5 +537,6 @@ if __name__ == '__main__':
 		for safe_path,label_path in chunk:
 			safe_local_path  = f"{WORK_DIR}/{safe_path.split('/')[-1]}" #remove 'eodata/../'
 			label_local_path = f"{WORK_DIR}/{label_path}"
+			print("Deleting files...")
 			shutil.rmtree(safe_local_path)
 			os.remove(label_local_path)

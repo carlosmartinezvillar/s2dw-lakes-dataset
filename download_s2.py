@@ -224,7 +224,7 @@ class Downloader():
 		'''
 		Download products via S3.
 		'''
-		#download
+		#download -- this does only a dry run. Remove dry-run flag to actually download.
 		proc0 = sp.run([
 			"rclone","copy",
 			"--include-from",queue_file,
