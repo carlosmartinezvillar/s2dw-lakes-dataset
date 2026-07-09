@@ -138,9 +138,10 @@ if __name__ == '__main__':
 		refresh_token=cred_data.get('refresh_token'),
 		client_id=cred_data.get('client_id'),
 		client_secret=cred_data.get('client_secret'),
-		token_uri='https://googleapis.com'
+		token_uri=ee.oauth.TOKEN_URI, # Maps to 'https://googleapis.com'
+		scopes=ee.oauth.SCOPES
 	)
-	
+
 	# Initialize forcing these specific credentials and your project
 	ee.Initialize(
 		credentials=scoped_credentials,
