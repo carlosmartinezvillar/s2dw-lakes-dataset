@@ -11,14 +11,9 @@ class Downloader():
 	"""
 	Explanation of the class...
 	"""
-	def __init__(self,input_yaml,out_dir):
+	def __init__(self,out_dir):
 
 		#CHECK ARGS
-		if not os.path.isfile(input_yaml):
-			print("Input YAML file not found in path given.")
-			raise FileNotFoundError
-		self.input_yaml = input_yaml
-
 		if not os.path.isdir(out_dir):
 			print("Output dir not found.")
 			raise FileNotFoundError
@@ -30,93 +25,39 @@ class Downloader():
 		self.instrument  = "MSI"
 		self.productType = "S2MSI2A"
 		self.sensorMode  = None #some "null" some INS-NOBS for S2 ¿?
-		self.bands       = None							   	      #<--- INPUT YAML
 
 		#AOI PARAMETERS
-		self.cloudCover     = None #e.g. 10.00 				      #<--- INPUT YAML
-		self.startDate      = None #e.g. 2021-10-01T21:37:00.000Z #<--- INPUT YAML
-		self.endDate        = None 								  #<--- INPUT YAML
-		self.lon            = None #EPSG:4326 e.g. 21.01 		  #<--- INPUT YAML
-		self.lat            = None 								  #<--- INPUT YAML
-		self.geometry       = None 								  #<--- INPUT YAML
+		self.cloudCover = "5.00"
+		self.startDate  = "2025-01-01T00:00:00.000Z"
+		self.endDate    = "2026-01-01T00:00:00.000Z"
+		self.geometry   = "POINT(00.00,00.00)"
+		self.bands      = ["B02","B03","B04","B08"]
 
 		#JSON RETURN PARAMETERS
 		self.maxRecords = 100
 		self.sortParam  = "startDate"
 		self.sortOrder  = "ascending"
 
-		#SEARCH PARAMETERS/YAML
-		self.file_parameters = None
-		self.parse_yaml()
-		self.check_yaml_inputs()
+		#QUERY & SEARCH RESULTS
 		self.query    = None
 		self.names    = [] #["*.SAFE"]
-		self.s3_ids   = [] #["/eodata/Sentinel-2/MSI/.../*.SAFE"]
+		self.s3_ids   = [] #["eodata/Sentinel-2/MSI/.../*.SAFE"]
 		self.polygons = [] #[{"type":"Polygon","coordinates":[[[]]]}]
+		self.statuses = []
+		self.baselines = []
 
-		#DOWNLOAD PARAMETERS
-		self.RCLONE_MAX = "16"
+		#DOWNLOAD
+		self.RCLONE_MAX = "4"
 		self.ODATA_BASE_URL = "https://catalogue.dataspace.copernicus.eu/odata/v1/Products?"
+
+		# S3 QUEUE
+		self.s3_ids_filtered = self.s3_id
 		self.s3_band_paths = []
-
-
-	def parse_yaml(self):
-		'''
-		Set bands, cloudCover, startDate, completionDate, lon and lat or geometry
-		'''
-		#check file exists
-		try:
-			with open(self.input_yaml,'r') as fp:
-				yaml_data = yaml.safe_load(fp)
-		except FileNotFoundError:
-			print(f"File {self.input_yaml} not found.")
-		except yaml.YAMLError as e:
-			print(f"Error parsing YAML: {e}")
-		self.file_parameters = yaml_data
-
-
-	def check_yaml_inputs(self):
-		'''
-		Check parameters are correct and leave as None if missing.
-		TODO: Missing further checks.
-		'''
-
-		#1. cloud cover
-		if "cloudCover" in self.file_parameters:
-			self.cloudCover = self.file_parameters['cloudCover']
-		else:
-			self.cloudCover = "5.00"
-
-		#2. dates and date format
-		if "startDate" in self.file_parameters:
-			self.startDate = self.file_parameters['startDate']
-
-		if "endDate" in self.file_parameters:
-			self.endDate = self.file_parameters['endDate']
-
-		#3.aoi -- Set in order useful for user feedback
-		# check lon,lat -- if given set to
-		if ("lon" in self.file_parameters and "lat" in self.file_parameters):
-			self.lon = self.file_parameters['lon']
-			self.lat = self.file_parameters['lat']
-
-		#check geometry
-		if "geometry" in self.file_parameters:
-			self.geometry = self.file_parameters['geometry']
-		#missing format check <----	
-
-		if self.geometry==None and self.lon==None and self.lat==None:
-			#nothing set
-			print("Search area not set. Check 'geometry' or 'lon','lat' in input yaml file.")
-
-		#4. bands
-		if "bands" in self.file_parameters:
-			self.bands = self.file_parameters['bands']
 
 
 	def build_odata_query(self):
 		'''
-		Set up an OData query for CDSE. Takes current object parameters.
+		Set up an OData query for CDSE using object parameters.
 		'''
 		#Filters
 		collection  = "Collection/Name eq 'SENTINEL-2'"
@@ -199,6 +140,12 @@ class Downloader():
 			current_page += 1
 
 
+	def drop_tiles_from_queue(self,tile_str):
+		safe_tiles = [s.split('/')[-1].split('_')[-2] for s in self.s3_ids_filtered]
+		mask = np.array(safe_tiles) == tile_str
+		self.s3_ids_filtered = self.s3_ids_filtered[~mask]
+		
+
 	def log_search(self):
 		#LOG THE SEARCH -- links
 		log = [f"{product}\t{s3}" for product,s3 in zip(self.names,self.s3_ids)]
@@ -211,12 +158,11 @@ class Downloader():
 			fp.write("\n".join(log))
 
 		#LOG DOWNLOAD QUEUE -- include files for S3 client (rclone)
-		for s3folder in self.s3_ids:
+		for s3folder in self.s3_ids_filtered:
 			for band in self.bands:
 				self.s3_band_paths.append(f"{s3folder}/GRANULE/*/IMG_DATA/R10m/*_{band}_10m.jp2")
 
-		temp_file = f"{self.out_dir}/download_queue.txt"
-		with open(temp_file,'w') as fp:
+		with open(f"{self.out_dir}/download_queue.txt",'w') as fp:
 			fp.write(str("\n".join(self.s3_band_paths)))
 
 
@@ -234,7 +180,7 @@ class Downloader():
 
 if __name__ == '__main__':
 
-	D = Downloader("./search/search.yml","./search")
+	D = Downloader("./search")
 
 	with open('./search/centroids.txt','r') as fp:
 		centroids = fp.readlines()
@@ -245,5 +191,7 @@ if __name__ == '__main__':
 		print(f"Searching {D.geometry} ...")
 		D.search_odata()
 
+	D.drop_tiles_from_queue("T11SKD")
+	D.drop_tiles_from_queue("T11TKE")
 	D.log_search()
 
