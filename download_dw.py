@@ -9,7 +9,9 @@ import rasterio as rio
 import sys
 import argparse
 import glob
-# import subprocess as sp
+import json
+from google.oauth2.credentials import Credentials
+import ee
 
 S2_DIR = None
 DRIVE_FOLDER = "DW_LABELS"
@@ -107,7 +109,7 @@ def parse_args():
 		prog="download_dw.py",
 		description="Download DynamicWorld V1 products to a Google Drive folder.")
 	parser.add_argument('--s2-dir',default=None,
-		help="Source directory of raw Sentinel-2 products.")
+		help="Source directory of Sentinel-2 products.")
 
 	# READ
 	args = parser.parse_args()
@@ -125,7 +127,26 @@ if __name__ == '__main__':
 
 	########## I.GEE & CREDENTIALS ##########
 	print("Running ee.Initialize()...")
-	ee.Initialize()
+	CREDENTIALS_PATH = '/root/.config/earthengine/credentials'
+    with open(CREDENTIALS_PATH, 'r') as f:
+        cred_data = json.load(f)
+    
+    # Format the token payload into Google OAuth2 credentials object
+    # Legacy files use 'refresh_token', 'client_id', and 'client_secret'
+    scoped_credentials = Credentials(
+        token=None,
+        refresh_token=cred_data.get('refresh_token'),
+        client_id=cred_data.get('client_id'),
+        client_secret=cred_data.get('client_secret'),
+        token_uri='https://googleapis.com'
+    )
+    
+    # Initialize forcing these specific credentials and your project
+    ee.Initialize(
+        credentials=scoped_credentials,
+        project='s2dw-lakes-masks'
+    )
+	# ee.Initialize()
 
 	########## II.CREATE TASKS ##########
 	# CHECK PREVIOUS PENDING TASKS
