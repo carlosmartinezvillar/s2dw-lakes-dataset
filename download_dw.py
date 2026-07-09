@@ -128,24 +128,24 @@ if __name__ == '__main__':
 	########## I.GEE & CREDENTIALS ##########
 	print("Running ee.Initialize()...")
 	CREDENTIALS_PATH = '/root/.config/earthengine/credentials'
-    with open(CREDENTIALS_PATH, 'r') as f:
-        cred_data = json.load(f)
-    
-    # Format the token payload into Google OAuth2 credentials object
-    # Legacy files use 'refresh_token', 'client_id', and 'client_secret'
-    scoped_credentials = Credentials(
-        token=None,
-        refresh_token=cred_data.get('refresh_token'),
-        client_id=cred_data.get('client_id'),
-        client_secret=cred_data.get('client_secret'),
-        token_uri='https://googleapis.com'
-    )
-    
-    # Initialize forcing these specific credentials and your project
-    ee.Initialize(
-        credentials=scoped_credentials,
-        project='s2dw-lakes-masks'
-    )
+	with open(CREDENTIALS_PATH, 'r') as f:
+		cred_data = json.load(f)
+
+	# Format the token payload into Google OAuth2 credentials object
+	# Legacy files use 'refresh_token', 'client_id', and 'client_secret'
+	scoped_credentials = Credentials(
+		token=None,
+		refresh_token=cred_data.get('refresh_token'),
+		client_id=cred_data.get('client_id'),
+		client_secret=cred_data.get('client_secret'),
+		token_uri='https://googleapis.com'
+	)
+	
+	# Initialize forcing these specific credentials and your project
+	ee.Initialize(
+		credentials=scoped_credentials,
+		project='s2dw-lakes-masks'
+	)
 	# ee.Initialize()
 
 	########## II.CREATE TASKS ##########
