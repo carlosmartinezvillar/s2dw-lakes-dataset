@@ -180,7 +180,7 @@ class Downloader():
 			for entry in resp_json['value']:
 				self.names.append(entry['Name'])
 				self.polygons.append(entry['Footprint'])
-				self.s3_ids.append(entry['S3Path'])
+				self.s3_ids.append(entry['S3Path'].lstrip('/')) #remove leading '/'
 
 			# more pages?
 			if "@odata.nextLink" not in resp_json:
