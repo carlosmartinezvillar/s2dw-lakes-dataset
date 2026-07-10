@@ -136,17 +136,14 @@ if __name__ == '__main__':
 	scoped_credentials = Credentials(
 		token=None,
 		refresh_token=cred_data.get('refresh_token'),
-		client_id=cred_data.get('client_id'),
-		client_secret=cred_data.get('client_secret'),
+		client_id=ee.oauth.CLIENT_ID,
+		client_secret=ee.oauth.CLIENT_SECRET,
 		token_uri=ee.oauth.TOKEN_URI, # Maps to 'https://googleapis.com'
-		scopes=ee.oauth.SCOPES
+		scopes=cred_data.get('scopes',ee.oauth.SCOPES)
 	)
 
 	# Initialize forcing these specific credentials and your project
-	ee.Initialize(
-		credentials=scoped_credentials,
-		project='s2dw-lakes-masks'
-	)
+	ee.Initialize(credentials=scoped_credentials,project='s2dw-lakes-masks')
 	# ee.Initialize()
 
 	########## II.CREATE TASKS ##########
