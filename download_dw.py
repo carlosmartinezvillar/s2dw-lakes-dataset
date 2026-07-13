@@ -98,9 +98,9 @@ def start_task(task:ee.batch.Task ,ee_id:str):
 	'''
 	try:
 		task.start()
-		print(f"Launched Drive task for {ee_id}...")		
+		print(f"Launched Drive task for {ee_id}")		
 	except Exception as e:
-		print(f"Error launching task for {ee_id}.\nSkipping...")
+		print(f"Error launching task for {ee_id}. Skipping...")
 
 
 def parse_args():
@@ -156,12 +156,13 @@ if __name__ == '__main__':
 	# S2 DIRS
 	safe_regex   = "eodata/Sentinel-2/MSI/L2A/*/*/*/*.SAFE"
 	safe_folders = glob.glob(safe_regex,root_dir=S2_DIR) #returns ['/eodata/.../*.SAFE']
+	n_safe       = len(safe_folders)
 
 	ee_ids = []
 	tasks  = []
 	missing = []
 
-	for safe_path in safe_folders:
+	for i,safe_path in enumerate(safe_folders):
 
 		abs_safe_path = f"{S2_DIR}/{safe_path}"
 		ee_id = get_gee_id(abs_safe_path)
@@ -175,7 +176,7 @@ if __name__ == '__main__':
 		try:
 			ee.data.getAsset(f"GOOGLE/DYNAMICWORLD/V1/{ee_id}") # Check metadata w/o loading
 		except ee.EEException:
-			print(f"No asset: {ee_id}")
+			print(f"[{i}/{n_safe}] No asset: {ee_id}")
 			missing.append(ee_id)
 			continue		
 
@@ -186,14 +187,21 @@ if __name__ == '__main__':
 
 
 		#CREATE TASK
-		print(f"Creating Drive task for product {ee_id}")		
+		print(f"[{i}/{n_safe}] Creating Drive task for product {ee_id}")		
 		task = create_task(ee_img,ee_id,s2_reader)
 		tasks.append(task)
 
 		# CLEAN UP
 		s2_reader.close()
 
+	n_tasks   = len(tasks)
+	n_missing = len(missing)
+
 
 	########## III.LAUNCH TASKS ##########
 	for task,name in zip(tasks,ee_ids):
 		start_task(task,name)
+
+	print(f"S2 .SAFE folders: {n_safe}")
+	print(f"Nr. of export tasks launched: {n_tasks}")
+	print(f"Nr. of mismatches/missing DW products: {n_missing}")
