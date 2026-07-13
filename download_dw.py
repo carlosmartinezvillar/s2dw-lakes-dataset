@@ -20,7 +20,7 @@ def get_gee_id(safe_path:str) -> str:
 	'''
 	Get DynamicWorld id from Sentinel-2 .SAFE string and subfolder.
 	'''
-	subdir = glob.glob("*",root_dir=f"{safe_path}/GRANULE")[0]
+	subdir = glob.glob("*",root_dir=f"{S2_DIR}/{safe_path}/GRANULE")[0]
 	datastrip = subdir.split('_')[-1]
 	date,tile = safe_path.split('/')[-1].split('_')[2:6:3]
 	gee_id = f"{date}_{datastrip}_{tile}"
@@ -131,8 +131,8 @@ if __name__ == '__main__':
 	with open(CREDENTIALS_PATH, 'r') as f:
 		cred_data = json.load(f)
 
-	# Format the token payload into Google OAuth2 credentials object
-	# Legacy files use 'refresh_token', 'client_id', and 'client_secret'
+	# FORMAT THE TOKEN PAYLOAD AS GOOGLE OAUTH2 OBJECT
+	# LEGACY FILES USE 'REFRESH_TOKEN', 'CLIENT_ID', AND 'CLIENT_SECRET'
 	scoped_credentials = Credentials(
 		token=None,
 		refresh_token=cred_data.get('refresh_token'),
@@ -142,9 +142,10 @@ if __name__ == '__main__':
 		scopes=cred_data.get('scopes',ee.oauth.SCOPES)
 	)
 
-	# Initialize forcing these specific credentials and your project
+	# INITIALIZE SPECIFIC CREDENTIALS
 	ee.Initialize(credentials=scoped_credentials,project='s2dw-lakes-masks')
 	# ee.Initialize()
+
 
 	########## II.CREATE TASKS ##########
 	# CHECK PREVIOUS PENDING TASKS
@@ -188,6 +189,7 @@ if __name__ == '__main__':
 
 		# CLEAN UP
 		s2_reader.close()
+
 
 	########## III.LAUNCH TASKS ##########
 	for task,name in zip(tasks,ee_ids):
