@@ -87,7 +87,7 @@ class Product():
 		# paths = [f"{self.safe_path}/{s}" for s in glob.glob(band_regex,root_dir=self.safe_path)]
 		band_regex = f"{self.safe_path}/GRANULE/*/IMG_DATA/R10m/*_B0[2348]_10m.jp2"
 		paths = sorted(glob.glob(band_regex)) # returns B02,B03,B04,B08 -- BGRN 
-		paths = paths[::-1][1:] + [paths[-1]] # <----------------------------------------- CHECK ORDER!
+		paths = paths[::-1][1:] + [paths[-1]] # set to RGBN - 04,03,02,08
 		return paths
 
 
@@ -181,7 +181,7 @@ class Product():
 def get_datastrip_id(safe_path):
 	'''
 	Given a string like /*.SAFE/GRANULE/SUBFOLDER, use SUBFOLDER to return
-	datastrip id
+	datastrip id. Takes absolute paths.
 	'''
 	subdir = glob.glob("*",root_dir=f"{safe_path}/GRANULE")[0]
 	return subdir.split('_')[-1]
@@ -192,11 +192,12 @@ def get_dw_id(safe_str,datastrip_str):
 	'''
 	Build DynamicWorldV1 (DW) product ID from *.SAFE folder name and datastrip str.
 	DW follows {date}_{datastrip}_{tile} convention.
+	Takes absolute paths.
 	'''
 	# tile  = safe_str[38:44]
 	# date  = safe_str[11:26]
 	tile = safe_str.split('/')[-1].split('_')[-2]
-	date = safe_str.split('_')[2] #more readable
+	date = safe_str.split('/')[-1].split('_')[2] #more readable
 	return f"{date}_{datastrip_str}_{tile}.tif"
 
 
@@ -479,13 +480,13 @@ if __name__ == '__main__':
 	safe_regex   = "eodata/Sentinel-2/MSI/L2A/*/*/*/*.SAFE"
 	remote_safes = glob.glob(safe_regex,root_dir=S2_DIR) #returns ['/eodata/.../*.SAFE']
 
-	datastrips = [get_datastrip_id(s) for s in remote_safes]
-	dw_ids     = [get_dw_id(s,d) for s,d in zip(remote_safes,datastrips)]	
+	datastrips = [get_datastrip_id(f"{S2_DIR}/{s}") for s in remote_safes]
+	dw_ids     = [get_dw_id(f"{S2_DIR}/{s}",d) for s,d in zip(remote_safes,datastrips)]
 
 	dw_files     = glob.glob("*.tif",root_dir=DW_DIR) # actual label dir
 	intersection = np.isin(dw_ids,dw_files)
-	good_safes   = np.array(remote_safes)[intersection]
-	good_labels  = np.array(dw_ids)[intersection] #match order
+	good_safes   = np.array(remote_safes)[intersection].tolist() #1035
+	good_labels  = np.array(dw_ids)[intersection].tolist() #match order
 
 
 	########## SPLIT AND QUEUE ################
@@ -537,6 +538,7 @@ if __name__ == '__main__':
 		for safe_path,label_path in chunk:
 			safe_local_path  = f"{WORK_DIR}/{safe_path.split('/')[-1]}" #remove 'eodata/../'
 			label_local_path = f"{WORK_DIR}/{label_path}"
-			print("Deleting files...")
-			shutil.rmtree(safe_local_path)
+			print(f"Deleting {safe_local_path}")
+			shutil.rmtree(safe_local_path)	
+			print(f"Deleting {label_local_path}")
 			os.remove(label_local_path)
