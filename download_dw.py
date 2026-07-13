@@ -20,7 +20,7 @@ def get_gee_id(safe_path:str) -> str:
 	'''
 	Get DynamicWorld id from Sentinel-2 .SAFE string and subfolder.
 	'''
-	subdir = glob.glob("*",root_dir=f"{S2_DIR}/{safe_path}/GRANULE")[0]
+	subdir = glob.glob("*",root_dir=f"{safe_path}/GRANULE")[0]
 	datastrip = subdir.split('_')[-1]
 	date,tile = safe_path.split('/')[-1].split('_')[2:6:3]
 	gee_id = f"{date}_{datastrip}_{tile}"
@@ -119,6 +119,8 @@ def parse_args():
 	# SET
 	global S2_DIR
 	S2_DIR = args.s2_dir
+	if S2_DIR[-1] == '/':
+		S2_DIR = S2_DIR[0:-1]
 
 
 if __name__ == '__main__':
@@ -161,10 +163,14 @@ if __name__ == '__main__':
 
 	for safe_path in safe_folders:
 
-		ee_id = get_gee_id(safe_path)
-
+		abs_safe_path = f"{S2_DIR}/{safe_path}"
+		ee_id = get_gee_id(abs_safe_path)
 		if ee_id in prev_tasks:
 			continue
+
+		# GET S2 CRS
+		s2_band_path = get_band_file_path(abs_safe_path)
+		s2_reader    = rio.open(s2_band_path,'r')
 
 		try:
 			ee.data.getAsset(f"GOOGLE/DYNAMICWORLD/V1/{ee_id}") # Check metadata w/o loading
@@ -178,9 +184,6 @@ if __name__ == '__main__':
 		ee_img = ee.Image(f"GOOGLE/DYNAMICWORLD/V1/{ee_id}")
 		ee_img = select_shift_unmask(ee_img)
 
-		# GET S2 CRS
-		s2_band_path = get_band_file_path(safe_path)
-		s2_reader    = rio.open(s2_band_path,'r')
 
 		#CREATE TASK
 		print(f"Creating Drive task for product {ee_id}")		
