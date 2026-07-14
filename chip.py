@@ -83,8 +83,6 @@ class Product():
 		'''
 		Get paths for individual .jp2 band files within *.SAFE folder
 		'''
-		# band_regex = f"GRANULE/*/IMG_DATA/R10m/*_10m.jp2"
-		# paths = [f"{self.safe_path}/{s}" for s in glob.glob(band_regex,root_dir=self.safe_path)]
 		band_regex = f"{self.safe_path}/GRANULE/*/IMG_DATA/R10m/*_B0[2348]_10m.jp2"
 		paths = sorted(glob.glob(band_regex)) # returns B02,B03,B04,B08 -- BGRN 
 		paths = paths[::-1][1:] + [paths[-1]] # set to RGBN - 04,03,02,08
