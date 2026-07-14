@@ -268,6 +268,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 			optimizer.zero_grad()
 			scaler.scale(loss).backward()
 			scaler.unscale_(optimizer)
+			torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 			# sum_norms += torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 			scaler.step(optimizer)
 			scaler.update()
@@ -383,7 +384,8 @@ if __name__ == "__main__":
 		CUDA_DEV = torch.device("cpu") 
 
 	#---------- SET ALL SEEDS ----------------------------------------------------------------------
-	set_seed(HP['seed'])
+	if HP['seed'] != 0:
+		set_seed(HP['seed'])
 
 	#---------- INPUT BANDS -----------------------------------------------------------------------
 	assert HP['bands'] in [3,4],"INCORRECT BAND NR IN JSON HYPERPARAMETER DICT."

@@ -1,6 +1,3 @@
-# import os
-# import time
-# import sys
 import torch
 import torchvision as tv
 from PIL import Image
@@ -91,6 +88,5 @@ class SentinelDataset(torch.utils.data.Dataset):
 		label = self.label_transform(Image.open(f'{self.ids[idx]}_LBL.tif'))
 		if self.additional_transform:
 			image,label = self.additional_transform(image,label)
-		# return image,label,self.ids[idx]
 		return image,label
 
