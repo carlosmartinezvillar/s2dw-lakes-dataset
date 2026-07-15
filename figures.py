@@ -10,9 +10,10 @@ from PIL import Image
 import glob
 import math
 
-
+# HARD-CODED US STATE POLYGONS SOURCE -- CHANGE TO USE (see plot_tile_polygons() arguments)
 STATE_SHP = "../"
 
+# DYNAMICWORLD COLORS & LABELS
 dw_colors = {
 0:"419bdf",
 1:"397d49",
@@ -35,19 +36,24 @@ dw_labels = {
 7:"bare",
 8:"snow_and_ice"}
 
+# MATPLOTLIB PRESETS
+plt.style.use('fast')
+plt.rcParams['font.family'] = 'Courier'
+plt.rcParams['font.size'] = 10
+fig_size_normal=(8,5)
+fig_size_wide=(16,4)
+
 ################################################################################
 # POLYGONS
 ################################################################################
-def plot_tile_polygons(us_geom,out_path):
+def plot_tile_polygons(us_geom):
 	'''
 	Plot a combined set of polygons for AOI and MGRS tiles.
 
 	Parameters:
 	----------
 	us_geom: str
-		path to a .shp file for US state geometries.	
-	out_path: str
-		path for resulting output .png image 
+		path to a .shp file for US state geometries.
 	'''
 	# TILES IN DATASET
 	tile_geometries_file = "./search/search_results_geometries.tsv"
@@ -298,8 +304,7 @@ def get_windows(borders):
 
 	return windows
 
-
-		
+	
 def plot_tile_bands_windows(img_path):
 	pass
 
@@ -398,7 +403,6 @@ def plot_tile_label_windows(s2_img_path,dw_img_path,chip_size=256,stride=256):
 	print(f"file written to {out_path}")
 
 
-
 ################################################################################
 # CHIPS
 ################################################################################
@@ -464,31 +468,211 @@ def plot_chip(chip_path):
 	plt.savefig(out_path, bbox_inches="tight", dpi=300)
 	plt.close()
 
+	# if need to adjust brightness
+	# r = np.array(red)
+	# g = np.array(grn)
+	# b = np.array(blu)
+	# n = np.array(nir)
+	# factor = 255
+	# new_r = Image.fromarray(((r - r.min())/(r.max()-r.min()) * factor).astype(np.uint8))
+	# new_g = Image.fromarray(((g - g.min())/(g.max()-g.min()) * factor).astype(np.uint8))
+	# new_b = Image.fromarray(((b - b.min())/(b.max()-b.min()) * factor).astype(np.uint8))
+	# new_n = Image.fromarray(((n - n.min())/(n.max()-n.min()) * factor).astype(np.uint8))
+	# rgb = Image.merge('RGB',[new_r,new_g,new_b])
+	# rgb.save("./chip_rgb.jpg")
+	# nrg = Image.merge('RGB',[new_n,new_r,new_g])
+	# nrg.save("./chip_ngr.jpg")
+
+
 	# LOG/STDOUT
 	print(f"File saved to {out_path}.")
 
 
 ################################################################################
-# BARS & HISTOGRAMS
+# BARS & HISTOGRAMS -- CHIPS
 ################################################################################
-def rasters_per_week(out_path):
+def plot_chip_band_histogram(chip_path):
+
+	# CHECK DIR
+	assert os.path.isfile(chip_path), f"No chip file found in path {chip_path}"
+	red,grn,blu,nir = Image.open(chip_path).split()
+
+	# PLOT
+	bins = 256
+	y_max = 25000 # < 65536?
+
+	fig,axes = plt.subplots(nrows=1,ncols=4,figsize=fig_size_wide,dpi=300,sharey=True)
+	axes[0].hist(np.array(nir).flatten(),bins=bins,histtype='bar',color='darkred')
+	axes[0].set_title("Near-infrared")
+	axes[0].set_xlim(0,255)
+	axes[0].set_ylabel("Count")
+	axes[1].hist(np.array(red).flatten(),bins=bins,histtype='bar',color='red')
+	axes[1].set_title("Red")
+	axes[1].set_xlim(0,255)
+	axes[2].hist(np.array(grn).flatten(),bins=bins,histtype='bar',color='green')
+	axes[2].set_title("Green")
+	axes[2].set_xlim(0,255)
+	axes[3].hist(np.array(blu).flatten(),bins=bins,histtype='bar',color='blue')
+	axes[3].set_title("Blue")
+	axes[3].set_xlim(0,255)
+	plt.tight_layout()
+	plt.savefig(f"./figures/{chip_id}_hist.png")
+	plt.close()
+
+
+################################################################################
+# BARS & HISTOGRAMS -- DATASET DISTRIBUTION
+################################################################################
+def plot_chips_per_raster(chip_dir):
+	'''
+	Histogram. Distribution of chips per raster.
+	'''	
+	# CHECK DIR
+	assert os.path.isdir(chip_dir), f"No chip file found in path {chip_dir}"
+
+	# LIST DIR
+	chips_tr = glob("*_B0X.tif",root_dir=f"{chip_dir}/training")
+	chips_va = glob("*_B0X.tif",root_dir=f"{chip_dir}/validation")
+	chips_te = glob("*_B0X.tif",root_dir=f"{chip_dir}/testing")
+	chips    = chips_tr + chips_va + chips_te
+	chip_rasters = [_[0:-19] for _ in chips]
+	
+	# FIND UNIQUE RASTER NAMES AND COUNT
+	rasters,chips_per_raster = np.unique(chip_rasters,return_counts=True)
+
+	# PLOT
+	plt.figure(figsize=fig_size_normal)
+	plt.hist(chips_per_raster,histtype='bar',bins=50)
+	plt.title(f"n_rasters = {len(rasters)}")
+	plt.ylabel("Count")
+	plt.xlabel("Chips per Raster") #this is correct
+	plt.tight_layout()
+	plt.savefig('./figures/chips_per_raster.png',dpi=300)
+	plt.close()
+
+
+def plot_chips_per_tile(chip_dir):
+
+	# CHECK DIR
+	assert os.path.isdir(chip_dir), f"No chip file found in path {chip_dir}"
+
+	# LIST CHIPS IN DIR
+	chips_tr = glob("*_B0X.tif",root_dir=f"{chip_dir}/training")
+	chips_va = glob("*_B0X.tif",root_dir=f"{chip_dir}/validation")
+	chips_te = glob("*_B0X.tif",root_dir=f"{chip_dir}/testing")
+	chips    = chips_tr + chips_va + chips_te
+
+	# GET TILES IN LIST
+	chip_tiles   = [_[32:-19] for _ in chips]	
+
+
+	# FIND UNIQUE TILES AND COUNT
+	tiles, chips_per_tile = np.unique(chip_tiles,return_counts=True) 
+
+	# PLOT
+	plt.figure(figsize=fig_size_wide)
+	plt.bar(tiles,chips_per_tile,color='C0')
+	plt.ylabel("# of Chips")
+	plt.xlabel("Tile")
+	plt.xticks(tiles,rotation=90)	
+	plt.tight_layout()
+	plt.savefig("./figures/chips_per_tile.png",dpi=300)
+	plt.close()
+
+
+def plot_chips_per_month(chip_dir):
+
+	# CHECK DIR
+	assert os.path.isdir(chip_dir), f"No chip file found in path {chip_dir}"
+
+	# CHIPS IN DIR
+	chips_tr = glob("*_B0X.tif",root_dir=f"{chip_dir}/training")
+	chips_va = glob("*_B0X.tif",root_dir=f"{chip_dir}/validation")
+	chips_te = glob("*_B0X.tif",root_dir=f"{chip_dir}/testing")
+	chips    = chips_tr + chips_va + chips_te
+
+	# GET DATES
+	# chip_dates  = [_[0:8] for _ in chips]
+	chip_months = [_[0:6] for _ in chips]
+
+	# GET UNIQUE DATES AND COUNT
+	# dates, chips_per_date = np.unique(chip_tiles,return_counts=True)
+	months, chips_per_month = np.unique(chip_months,return_counts=True)
+
+	# PLOT
+	month_ticks = [datetime.strptime(_,"%Y%m").strftime("%b-'%y") for _ in months]
+	plt.figure(figsize=fig_size_normal)
+	plt.bar(month_ticks,chips_per_month,color='C0')
+	plt.ylabel("# of Chips")
+	plt.xlabel("Month")
+	plt.xticks(rotation=90)		
+	plt.tight_layout()
+	plt.savefig("./figures/chips_per_month.png",dpi=300)
+	plt.close()
+
+
+def plot_chips_per_week(chip_dir):
+
+	# CHECK DIR
+	assert os.path.isdir(chip_dir), f"No chip file found in path {chip_dir}"
+
+	# LIST DIR
+	chips_tr = glob("*_B0X.tif",root_dir=f"{chip_dir}/training")
+	chips_va = glob("*_B0X.tif",root_dir=f"{chip_dir}/validation")
+	chips_te = glob("*_B0X.tif",root_dir=f"{chip_dir}/testing")
+	chips    = chips_tr + chips_va + chips_te	
+
+	# GET DATES, EXTRACT WEEK
+	chip_dates     = [_[0:8] for _ in chips]
+	chip_dates_obj = [datetime.strptime(_,"%Y%m%d") for _ in chip_dates]	
+	chip_weeks     = [f"{_.isocalendar().year}-{_.isocalendar().week:02}" for _ in chip_dates_obj]
+
+	# GET UNIQUE WEEKS AND COUNT CHIPS
+	weeks,chips_per_week = np.unique(chip_weeks,return_counts=True)
+
+	# PLOT
+	plt.figure(figsize=fig_size_wide)
+	plt.bar(weeks,chips_per_week,color='C0')
+	plt.ylabel("# of Chips")
+	plt.xlabel("Week")
+	plt.xticks(rotation=90)		
+	plt.tight_layout()
+	plt.savefig("./figures/chips_per_week.png",dpi=300)
+	plt.close()
+
+
+def plot_rasters_per_week(data_dir):
 	'''
 	Bar plot.
 	'''
+	# CHECK DIR
+	assert os.path.isdir(data_dir), f"No data directory in {data_dir}"
+
+	# GET .SAFE IDs
+
+	# GET DATES, EXTRACT WEEK
+
+	# GET UNIQUE WEEKS
+
+	# PLOT
 	pass
 
 
-def rasters_per_tile(out_path):
+def plot_rasters_per_tile(data_dir):
 	'''
 	Bar plot.
 	'''
-	pass
+	# CHECK DIR
+	assert os.path.isdir(data_dir), f"No data directory in {data_dir}"
 
+	# GET .SAFE IDs
 
-def chips_per_raster(out_path):
-	'''
-	Histogram. Distribution of # chips per single raster.
-	'''
+	# GET TILES
+
+	# GET UNIQUE TILES AND COUNT
+
+	# PLOT
+
 	pass
 
 
