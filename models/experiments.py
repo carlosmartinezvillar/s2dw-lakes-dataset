@@ -1,5 +1,6 @@
 '''
-Set files with rows of hyperparameter dictionaries.
+Sets experiments.
+Each experiment is a row with a dictionary of hyperparameters.
 '''
 import itertools
 import json
@@ -207,7 +208,7 @@ def set_hyperparameters(name):
 
 
 if __name__ == '__main__':
-	set_seed(476)
+	set_seed(476) #Set seed to fix list of hyperparameters
 	set_hyperparameters('stage_1')
 	set_hyperparameters('stage_2')
 	set_hyperparameters('stage_3')

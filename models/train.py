@@ -182,9 +182,9 @@ def update_confusion_matrix(confmat,T,Y,n_classes):
 def total_time_decorator(orig_func):
 	@wraps(orig_func)
 	def wrapper(*args, **kwargs):
-		total_time_start = time.time()
+		total_time_start = time.perf_counter()
 		orig_func(*args,**kwargs)
-		total_time = time.time() - total_time_start
+		total_time = time.perf_counter() - total_time_start
 		print(f'TOTAL TRAINING TIME: {total_time:.2f}s')
 
 	return wrapper
