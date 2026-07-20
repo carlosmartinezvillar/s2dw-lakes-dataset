@@ -1,5 +1,7 @@
 '''
-Assumes results stored as:
+Retrieve training results from training logs.
+
+Assumes log files are stored as:
 
 /LOG_DIR/stage_1/epochs_000.tsv
 /LOG_DIR/stage_1/epochs_001.tsv

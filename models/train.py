@@ -392,7 +392,11 @@ if __name__ == "__main__":
 		set_seed(HP['seed'])
 
 	#---------- LOAD MODEL ------------------------------------------------------------------------
-	net = eval(f"models.{HP['model']}({HP['id']},{HP['bands']},{HP['labels']})")
+	# HP['mlp_ratio']: 2,4
+	# HP['vit_layers']: 1,2
+	# HP['cnn_layers']: 2,3
+	# HP['channels']: 16,32
+	net = eval(f"models.{HP['model']}({HP['id']},{HP['bands']},{HP['labels']},{HP['cnn_layers']},{HP['vit_layers']},{HP['channels']},{HP['mlp_ratio']})")
 	net = net.to(CUDA_DEV)
 	net = torch.compile(net)
 

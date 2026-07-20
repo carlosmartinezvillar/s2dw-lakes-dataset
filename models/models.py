@@ -343,22 +343,22 @@ class CNNEncoder(nn.Module):
 	Spatial:  H  -> H/2 -> H/4 -> H/8 -> H/16
 	"""	
 	def __init__(self):
-		super().__init__()
+		super().__init__(cnn_layers=2,channels=32)
 		down_params = {'kernel_size': 3, 'stride': 2, 'padding': 1, 'bias': True}
 
-		self.encoder_1 = ConvBlock(32)
+		self.encoder_1 = ConvBlock(channels,depth=cnn_layers)
 
-		self.down_1    = nn.Conv2d(32,64,**down_params)
-		self.encoder_2 = ConvBlock(64)
+		self.down_1    = nn.Conv2d(channels,channels*2,**down_params)
+		self.encoder_2 = ConvBlock(channels*2,depth=cnn_layers)
 
-		self.down_2    = nn.Conv2d(64,128,**down_params)		
-		self.encoder_3 = ConvBlock(128)
+		self.down_2    = nn.Conv2d(channels*2,channels*4,**down_params)		
+		self.encoder_3 = ConvBlock(channels*4,depth=cnn_layers)
 
-		self.down_3    = nn.Conv2d(128,256,**down_params)		
-		self.encoder_4 = ConvBlock(256)
+		self.down_3    = nn.Conv2d(channels*4,channels*8,**down_params)		
+		self.encoder_4 = ConvBlock(channels*8)
 
-		self.down_4    = nn.Conv2d(256,512,**down_params)		
-		self.encoder_5 = ConvBlock(512)
+		self.down_4    = nn.Conv2d(channels*8,channels*16,**down_params)		
+		self.encoder_5 = ConvBlock(channels*16)
 
 
 	def forward(self,x):
@@ -378,19 +378,19 @@ class ViTEncoder(nn.Module):
 	Hybrid ViT without positional encoding. 2xCNN + 3xViT layers
 	'''
 
-	def __init__(self):
+	def __init__(self,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
 		super().__init__()
 		down_params = {'kernel_size': 3, 'stride': 2, 'padding': 1, 'bias': True}
 
-		self.encoder_1 = ConvBlock(32)
-		self.down_1    = nn.Conv2d(32,64,**down_params)
-		self.encoder_2 = ConvBlock(64)
-		self.down_2    = nn.Conv2d(64,128,**down_params)
-		self.encoder_3 = ViTBlock(128,num_heads=2)		
-		self.down_3    = nn.Conv2d(128,256,**down_params)
-		self.encoder_4 = ViTBlock(256,num_heads=4)
-		self.down_4    = nn.Conv2d(256,512,**down_params)
-		self.encoder_5 = ViTBlock(512,num_heads=8)	
+		self.encoder_1 = ConvBlock(channels=channels,depth=cnn_layers) #32
+		self.down_1    = nn.Conv2d(channels,channels*2,**down_params)
+		self.encoder_2 = ConvBlock(channels*2,depth=cnn_layers)
+		self.down_2    = nn.Conv2d(channels*2,channels*4,**down_params)
+		self.encoder_3 = ViTBlock(channels*4,num_heads=2,mlp_ratio=mlp_ratio,depth=vit_layers)		
+		self.down_3    = nn.Conv2d(channels*4,channels*8,**down_params)
+		self.encoder_4 = ViTBlock(channels*8,num_heads=4,mlp_ratio=mlp_ratio,depth=vit_layers)
+		self.down_4    = nn.Conv2d(channels*8,channels*16,**down_params)
+		self.encoder_5 = ViTBlock(channels*16,num_heads=8,mlp_ratio=mlp_ratio,depth=vit_layers)	
 
 
 	def forward(self,x):
@@ -461,27 +461,27 @@ class ViTDecoder(nn.Module):
 	'''
 	3-stage ViT & 2-stage CNN. Mirrors ViTEncoder().
 	'''
-	def __init__(self):
+	def __init__(self,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
 		super().__init__()	
 		up_params = {'kernel_size': 4, 'stride': 2,'padding': 1, 'bias': True}
 
-		self.decoder_1 = ViTBlock(512,num_heads=8)
-		self.up_1      = nn.ConvTranspose2d(512,256,**up_params)
+		self.decoder_1 = ViTBlock(channels*16,num_heads=8,mlp_ratio=mlp_ratio,depth=vit_layers)
+		self.up_1      = nn.ConvTranspose2d(channels*16,channels*8,**up_params)
 
-		self.ch_mix_2  = nn.Conv2d(512,256,1,bias=True)
-		self.decoder_2 = ViTBlock(256,num_heads=4)
-		self.up_2      = nn.ConvTranspose2d(256,128,**up_params)
+		self.ch_mix_2  = nn.Conv2d(channels*16,channels*8,1,bias=True)
+		self.decoder_2 = ViTBlock(channels*8,num_heads=4,mlp_ratio=mlp_ratio,depth=vit_layers)
+		self.up_2      = nn.ConvTranspose2d(channels*8,channels*4,**up_params)
 
-		self.ch_mix_3  = nn.Conv2d(256,128,1,bias=True)
-		self.decoder_3 = ViTBlock(128,num_heads=2)
-		self.up_3      = nn.ConvTranspose2d(128,64,**up_params)
+		self.ch_mix_3  = nn.Conv2d(channels*8,channels*4,1,bias=True)
+		self.decoder_3 = ViTBlock(channels*4,num_heads=2,mlp_ratio=mlp_ratio,depth=vit_layers)
+		self.up_3      = nn.ConvTranspose2d(channels*4,channels*2,**up_params)
 
-		self.ch_mix_4  = nn.Conv2d(128,64,1,bias=True)
-		self.decoder_4 = ConvBlock(64)
-		self.up_4      = nn.ConvTranspose2d(64,32,**up_params)
+		self.ch_mix_4  = nn.Conv2d(channels*4,channels*2,1,bias=True)
+		self.decoder_4 = ConvBlock(channels*2,depth=cnn_layers)
+		self.up_4      = nn.ConvTranspose2d(channels*2,channels,**up_params)
 
-		self.ch_mix_5  = nn.Conv2d(64,32,1,bias=True)
-		self.decoder_5 = ConvBlock(32)
+		self.ch_mix_5  = nn.Conv2d(channels*2,channels,1,bias=True)
+		self.decoder_5 = ConvBlock(channels,depth=cnn_layers)
 
 
 	def forward(self,x,skips):
@@ -502,26 +502,26 @@ class CNNDecoder(nn.Module):
 	5-stage CNN.
 	'''
 	def __init__(self):
-		super().__init__()
+		super().__init__(cnn_layers=2,channels=32)
 		up_params = {'kernel_size': 4, 'stride': 2,'padding': 1, 'bias': True}
 
-		self.decoder_1 = ConvBlock(512)
-		self.up_1      = nn.ConvTranspose2d(512,256,**up_params)
+		self.decoder_1 = ConvBlock(channels*16,depth=cnn_layers)
+		self.up_1      = nn.ConvTranspose2d(channels*16,channels*8,**up_params)
 
-		self.ch_mix_2  = nn.Conv2d(512,256,1,bias=True)
-		self.decoder_2 = ConvBlock(256)
-		self.up_2      = nn.ConvTranspose2d(256,128,**up_params)
+		self.ch_mix_2  = nn.Conv2d(channels*16,channels*8,1,bias=True)
+		self.decoder_2 = ConvBlock(channels*8,depth=cnn_layers)
+		self.up_2      = nn.ConvTranspose2d(channels*8,channels*4,**up_params)
 
-		self.ch_mix_3  = nn.Conv2d(256,128,1,bias=True)
-		self.decoder_3 = ConvBlock(128)
-		self.up_3      = nn.ConvTranspose2d(128,64,**up_params)
+		self.ch_mix_3  = nn.Conv2d(channels*8,channels*4,1,bias=True)
+		self.decoder_3 = ConvBlock(channels*4,depth=cnn_layers)
+		self.up_3      = nn.ConvTranspose2d(channels*4,channels*2,**up_params)
 
-		self.ch_mix_4  = nn.Conv2d(128,64,1,bias=True)
-		self.decoder_4 = ConvBlock(64)
-		self.up_4      = nn.ConvTranspose2d(64,32,**up_params)
+		self.ch_mix_4  = nn.Conv2d(channels*4,channels*2,1,bias=True)
+		self.decoder_4 = ConvBlock(channels*2,depth=cnn_layers)
+		self.up_4      = nn.ConvTranspose2d(channels*2,channels,**up_params)
 
-		self.ch_mix_5  = nn.Conv2d(64,32,1,bias=True)
-		self.decoder_5 = ConvBlock(32)
+		self.ch_mix_5  = nn.Conv2d(channels*2,channels,1,bias=True)
+		self.decoder_5 = ConvBlock(channels,depth=cnn_layers)
 
 
 	def forward(self,x,skips):
@@ -540,20 +540,20 @@ _ENCODERS = {'cnn': CNNEncoder, 'vit': ViTEncoder, 'vit2': ViTEncoderStemmed}
 _DECODERS = {'cnn': CNNDecoder, 'vit': ViTDecoder}
 
 class UNet(nn.Module):
-	def __init__(self,model_id,encoder='cnn',decoder='cnn',in_channels=3,out_labels=2):
+	def __init__(self,model_id,encoder='cnn',decoder='cnn',in_channels=3,out_labels=2,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
 		super().__init__()
 		assert encoder in _ENCODERS, f"encoder str must be one of {list(_ENCODERS)}"
 		assert decoder in _DECODERS, f"decoder str must be one of {list(_DECODERS)}"
 
 		# PARAMS/LOGS
-		self.model_id  = model_id
+		self.model_id   = model_id
 		self.model_name = "unet_modular"
 
 		# LAYERS
-		self.in_layer  = nn.Conv2d(in_channels,32,3,1,1,bias=True)
+		self.in_layer  = nn.Conv2d(in_channels,channels,3,1,1,bias=True)
 		self.encoder   = _ENCODERS[encoder]()
 		self.decoder   = _DECODERS[decoder]()
-		self.out_layer = nn.Conv2d(32,out_labels,kernel_size=1,padding=0)
+		self.out_layer = nn.Conv2d(channels,out_labels,kernel_size=1,padding=0)
 
 
 	def forward(self,x):
