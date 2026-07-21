@@ -15,6 +15,7 @@ import sys
 import argparse
 import subprocess as sp
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Chip properties
 CHIP_SIZE = 256
@@ -28,7 +29,8 @@ OVERLAP_MIN = 492
 OVERLAP_MAX = RASTER_SIZE - 492
 
 # Multiprocessing settings
-N_PROC = 12
+N_PROC = 8
+N_COPY = 5
 
 # Globals set by argparse
 WORK_DIR  = None #temp for s2,dw -- fast,local
@@ -469,6 +471,14 @@ def parse_args():
 	print(f"DW_DIR set to:   {DW_DIR}")	
 
 
+def copy_pair(safe_path,label_path):
+	'''
+	Worker function for multi-threaded copy in loop.
+	'''
+	dst = os.path.join(WORK_DIR,os.path.basename(safe_path))
+	shutil.copytree(f"{S2_DIR}/{safe_path}",dst,dirs_exist_ok=True)
+	shutil.copy2(f"{DW_DIR}/{label_path}",WORK_DIR)
+
 
 if __name__ == '__main__':
 	########## ARGS ##################################	
@@ -505,14 +515,20 @@ if __name__ == '__main__':
 	########## BATCH PROCESS #########################
 	for j,chunk in enumerate(chunk_queue):
 		print(f"[BATCH {j+1}/{len(chunk_queue)}]",flush=True)
+		N = len(chunk)
 
 		########## COPY DATA IN CHUNK ####################
-		N = len(chunk)
-		for i,(safe_path,label_path) in enumerate(chunk):
-			sp.run(["cp","-r",f"{S2_DIR}/{safe_path}",WORK_DIR]) # COPY BANDS (flat on dir)
-			sp.run(["cp",f"{DW_DIR}/{label_path}",WORK_DIR]) # COPY LABEL
-			if (i+1) % 10 == 0 or (i+1) == N:
-				print(f"Copied {i+1}/{N} image-label pairs")
+		# for i,(safe_path,label_path) in enumerate(chunk):
+			# sp.run(["cp","-r",f"{S2_DIR}/{safe_path}",WORK_DIR]) # COPY BANDS (flat on dir)
+			# sp.run(["cp",f"{DW_DIR}/{label_path}",WORK_DIR]) # COPY LABEL
+			# if (i+1) % 10 == 0 or (i+1) == N:
+				# print(f"Copied {i+1}/{N} image-label pairs")
+		with ThreadPoolExecutor(max_workers=N_COPY) as executor:
+			futures = [executor.submit(copy_pair,sp,lp) for sp,lp in chunk]
+			for i,future in enumerate(as_completed(futures)):
+				future.result()
+				if (i+1) % 10 == 0 or (i+1) == N:
+					print(f"Copied {i+1}/{N} image-label pairs")
 
 		########## CHIP ##################################
 		for i,(safe_path,label_path) in enumerate(chunk):
