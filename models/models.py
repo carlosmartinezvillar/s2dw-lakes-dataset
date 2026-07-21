@@ -621,7 +621,7 @@ class UNet_ViT2_CNN(nn.Module):
 		return self.out_layer(dec_out)
 
 
-class UNet_ViT2_ViT(UNet):
+class UNet_ViT2_ViT(nn.Module):
 	def __init__(self,model_id,in_channels=3,out_labels=2,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
 		# super().__init__(model_id,encoder='vit2', decoder='vit',in_channels=in_channels, out_labels=out_labels,
 			# cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)	
