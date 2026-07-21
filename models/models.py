@@ -664,7 +664,7 @@ def get_model_parameter_size(model):
 if __name__ == '__main__':
 
 	#DO SOME CHECKS
-	variations = [UNet_CNN_CNN,UNet_ViT_CNN,UNet_CNN_ViT,UNet_ViT_ViT]
+	variations = [UNet_CNN_CNN,UNet_ViT_CNN,UNet_CNN_ViT,UNet_ViT_ViT,UNet_ViT2_CNN,UNet_ViT2_ViT]
 
 	for v in variations:
 		kwargs = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':4} #largest models
