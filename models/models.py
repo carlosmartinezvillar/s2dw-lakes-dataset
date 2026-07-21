@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+# import torch.nn.functional as F
 import math
 
 ################################################################################
@@ -634,7 +634,7 @@ def get_model_parameter_size(model):
 	# COUNT STUFF
 	all_params       = sum(p.numel() for p in model.parameters())
 	trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-	named_params     = [n: sum(p.numel() for p in m.parameters if p.requires_grad) for n,m in model.named_children()]
+	named_params     = {n: sum(p.numel() for p in m.parameters if p.requires_grad) for n,m in model.named_children()}
 
 	# (SOMEWHAT) PRETTY PRINT
 	print("-"*40)
