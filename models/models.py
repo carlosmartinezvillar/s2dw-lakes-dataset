@@ -30,7 +30,9 @@ class ConvBlock(nn.Module):
 			))
 
 	def forward(self,x):
-		return x + self.block(x)
+		for layer in block:
+			out = layer(x)
+		return x + self.block(out)
 
 
 class ConvBlockSeparable(nn.Module):
