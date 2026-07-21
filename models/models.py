@@ -655,7 +655,7 @@ def get_model_parameter_size(model):
 ################################################################################
 if __name__ == '__main__':
 
-	model = UNet_CNN_CNN(model_id=999)
+	# model = UNet_CNN_CNN(model_id=999)
 
 	get_model_memory_size(model)
 	get_model_parameter_size(model)
@@ -664,17 +664,19 @@ if __name__ == '__main__':
 	# B, C, H, W = 2, 3, 256, 256
 	# x = torch.randn(B, C, H, W)
 
-	# variations = [
-	# 	('cnn', 'cnn'),
-	# 	('cnn', 'vit'),
-	# 	('vit', 'cnn'),
-	# 	('vit', 'vit'),
-	# 	('vit2','cnn'),
-	# 	('vit2','vit')
-	# ]
+	variations = [
+		('cnn', 'cnn'),
+		('cnn', 'vit'),
+		('vit', 'cnn'),
+		('vit', 'vit')
+	]
 
-	# for enc, dec in variations:
-		# model = UNet(model_id=0,encoder=enc,decoder=dec)
+	for enc, dec in variations:
+		model = UNet(model_id=999,encoder=enc,decoder=dec)
+
+		get_model_memory_size(model)
+		get_model_parameter_size(model)
+				
 		# model.eval()
 		# with torch.no_grad():
 			# out = model(x)
