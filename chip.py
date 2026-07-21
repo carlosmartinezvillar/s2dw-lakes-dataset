@@ -528,7 +528,7 @@ if __name__ == '__main__':
 			for i,future in enumerate(as_completed(futures)):
 				future.result()
 				if (i+1) % 10 == 0 or (i+1) == N:
-					print(f"Copied {i+1}/{N} image-label pairs")
+					print(f"Copied {i+1}/{N} image-label pairs",flush=True)
 
 		########## CHIP ##################################
 		for i,(safe_path,label_path) in enumerate(chunk):
