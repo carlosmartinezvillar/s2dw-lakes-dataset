@@ -174,7 +174,9 @@ class ViTBlock(nn.Module):
 	def forward(self,x):
 		B,C,H,W = x.shape
 		tokens = x.permute(0,2,3,1).reshape(B,H*W,C)
-		tokens = self.block(tokens)
+		# tokens = self.block(tokens)
+		for layer in self.block:
+			tokens = layer(tokens)
 		return tokens.reshape(B,H,W,C).permute(0,3,1,2)
 
 
@@ -665,7 +667,7 @@ if __name__ == '__main__':
 	variations = [UNet_CNN_CNN,UNet_ViT_CNN,UNet_CNN_ViT,UNet_ViT_ViT]
 
 	for v in variations:
-		kwargs = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':4}
+		kwargs = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':4} #largest models
 		model = v(model_id=999,**kwargs)
 
 		get_model_memory_size(model)
