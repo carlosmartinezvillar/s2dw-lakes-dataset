@@ -668,7 +668,7 @@ if __name__ == '__main__':
 		kwargs = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':4}
 		model = v(model_id=999,**kwargs)
 
-		# get_model_memory_size(model)
+		get_model_memory_size(model)
 		get_model_parameter_size(model)
 
 
