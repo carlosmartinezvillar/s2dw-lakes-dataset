@@ -554,8 +554,7 @@ class UNet(nn.Module):
 		self.model_name = "unet_modular"
 
 		# LAYERS
-		if encoder != 'vit2':
-			self.in_layer  = nn.Conv2d(in_channels,channels,3,1,1,bias=True)
+		self.in_layer  = nn.Conv2d(in_channels,channels,3,1,1,bias=True)
 		self.encoder   = _ENCODERS[encoder](cnn_layers,vit_layers,channels,mlp_ratio)
 		self.decoder   = _DECODERS[decoder](cnn_layers,vit_layers,channels,mlp_ratio)
 		self.out_layer = nn.Conv2d(channels,out_labels,kernel_size=1,padding=0)
@@ -603,21 +602,41 @@ class UNet_ViT_ViT(UNet):
 		self.model_id   = model_id
 
 
-class UNet_ViT2_CNN(UNet):
+class UNet_ViT2_CNN(nn.Module):
 	def __init__(self,model_id,in_channels=3,out_labels=2,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
-		super().__init__(model_id,encoder='vit2', decoder='cnn',in_channels=in_channels, out_labels=out_labels,
-			cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)
+		# super().__init__(model_id,encoder='vit2', decoder='cnn',in_channels=in_channels, out_labels=out_labels,
+			# cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)
 		self.model_name = "unet_vit2_cnn"
 		self.model_id   = model_id
+
+		# self.in_layer  = nn.Conv2d(in_channels,channels,3,1,1,bias=True)
+		self.encoder   = ViTEncoderStemmed(cnn_layers,vit_layers,channels,mlp_ratio)
+		self.decoder   = CNNDecoder(cnn_layers,vit_layers,channels,mlp_ratio)
+		self.out_layer = nn.Conv2d(channels,out_labels,kernel_size=1,padding=0)
+
+
+	def forward(self,x):
+		skips,enc_out = self.encoder(x)
+		dec_out       = self.decoder(enc_out,skips)
+		return self.out_layer(dec_out)
 
 
 class UNet_ViT2_ViT(UNet):
 	def __init__(self,model_id,in_channels=3,out_labels=2,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
-		super().__init__(model_id,encoder='vit2', decoder='vit',in_channels=in_channels, out_labels=out_labels,
-			cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)	
+		# super().__init__(model_id,encoder='vit2', decoder='vit',in_channels=in_channels, out_labels=out_labels,
+			# cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)	
 		self.model_name = "unet_vit2_vit"
 		self.model_id   = model_id
 
+		self.encoder   = ViTEncoderStemmed(cnn_layers,vit_layers,channels,mlp_ratio)
+		self.decoder   = ViTDecoder(cnn_layers,vit_layers,channels,mlp_ratio)
+		self.out_layer = nn.Conv2d(channels,out_labels,kernel_size=1,padding=0)
+
+
+	def forward(self,x):
+		skips,enc_out = self.encoder(x)
+		dec_out       = self.decoder(enc_out,skips)
+		return self.out_layer(dec_out)
 
 ################################################################################
 # FUNCTIONS
