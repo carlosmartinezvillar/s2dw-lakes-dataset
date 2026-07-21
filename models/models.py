@@ -692,8 +692,10 @@ if __name__ == '__main__':
 	#DO SOME CHECKS
 	variations = [UNet_CNN_CNN,UNet_ViT_CNN,UNet_CNN_ViT,UNet_ViT_ViT,UNet_ViT2_CNN,UNet_ViT2_ViT]
 
+	kwargs = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':4} #largest models
+
 	for v in variations:
-		kwargs = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':4} #largest models
+		
 		model = v(model_id=999,**kwargs)
 
 		get_model_memory_size(model)
