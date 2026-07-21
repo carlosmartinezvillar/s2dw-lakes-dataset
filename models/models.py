@@ -344,7 +344,7 @@ class CNNEncoder(nn.Module):
 	Channels: 32 -> 64 -> 128 -> 256 -> 512
 	Spatial:  H  -> H/2 -> H/4 -> H/8 -> H/16
 	"""	
-	def __init__(self,cnn_layers=2,channels=32):
+	def __init__(self,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
 		super().__init__()
 		down_params = {'kernel_size': 3, 'stride': 2, 'padding': 1, 'bias': True}
 
@@ -411,7 +411,7 @@ class ViTEncoderStemmed(nn.Module):
 	Patch embedding on inputs HxW to H/4xW/4. CNN stem to pass high-dimension 
 	feature maps from encoder to decoder.
 	'''
-	def __init__(self):
+	def __init__(self,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
 		super().__init__()
 		stem_params = {'kernel_size': 3, 'stride': 1, 'padding': 1, 'bias': True}
 		down_params = {'kernel_size': 3, 'stride': 2, 'padding': 1, 'bias': True}
@@ -503,7 +503,7 @@ class CNNDecoder(nn.Module):
 	'''
 	5-stage CNN.
 	'''
-	def __init__(self,cnn_layers=2,channels=32):
+	def __init__(self,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
 		super().__init__()
 		up_params = {'kernel_size': 4, 'stride': 2,'padding': 1, 'bias': True}
 
@@ -553,8 +553,8 @@ class UNet(nn.Module):
 
 		# LAYERS
 		self.in_layer  = nn.Conv2d(in_channels,channels,3,1,1,bias=True)
-		self.encoder   = _ENCODERS[encoder]()
-		self.decoder   = _DECODERS[decoder]()
+		self.encoder   = _ENCODERS[encoder](cnn_layers,vit_layers,channels,mlp_ratio)
+		self.decoder   = _DECODERS[decoder](cnn_layers,vit_layers,channels,mlp_ratio)
 		self.out_layer = nn.Conv2d(channels,out_labels,kernel_size=1,padding=0)
 
 
@@ -566,46 +566,52 @@ class UNet(nn.Module):
 
 
 ################################################################################
-# UNET SUBCLASSES
+# UNET SUBCLASSES/ENTRY POINT
 ################################################################################
 class UNet_CNN_CNN(UNet):
-	def __init__(self,model_id,in_channels=3,out_labels=2):
-		super().__init__(model_id,encoder='cnn', decoder='cnn',in_channels=in_channels, out_labels=out_labels)
+	def __init__(self,model_id,in_channels=3,out_labels=2,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
+		super().__init__(model_id,encoder='cnn', decoder='cnn',in_channels=in_channels, out_labels=out_labels,
+			cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)
 		self.model_name = "unet_cnn_cnn"
 		self.model_id   = model_id
 
 
 class UNet_CNN_ViT(UNet):
-	def __init__(self,model_id,in_channels=3,out_labels=2):
-		super().__init__(model_id,encoder='cnn', decoder='vit',in_channels=in_channels, out_labels=out_labels)
+	def __init__(self,model_id,in_channels=3,out_labels=2,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
+		super().__init__(model_id,encoder='cnn', decoder='vit',in_channels=in_channels, out_labels=out_labels,
+			cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)
 		self.model_name = "unet_cnn_vit"
 		self.model_id   = model_id
 
 
 class UNet_ViT_CNN(UNet):
-	def __init__(self,model_id,in_channels=3,out_labels=2):
-		super().__init__(model_id,encoder='vit', decoder='cnn',in_channels=in_channels, out_labels=out_labels)
+	def __init__(self,model_id,in_channels=3,out_labels=2,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
+		super().__init__(model_id,encoder='vit', decoder='cnn',in_channels=in_channels, out_labels=out_labels,
+			cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)
 		self.model_name = "unet_vit_cnn"
 		self.model_id   = model_id
 
 
 class UNet_ViT_ViT(UNet):
-	def __init__(self,model_id,in_channels=3,out_labels=2):
-		super().__init__(model_id,encoder='vit', decoder='vit',in_channels=in_channels, out_labels=out_labels)
+	def __init__(self,model_id,in_channels=3,out_labels=2,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
+		super().__init__(model_id,encoder='vit', decoder='vit',in_channels=in_channels, out_labels=out_labels,
+			cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)
 		self.model_name = "unet_vit_vit"
 		self.model_id   = model_id
 
 
 class UNet_ViT2_CNN(UNet):
-	def __init__(self,model_id,in_channels=3,out_labels=2):
-		super().__init__(model_id,encoder='vit2', decoder='cnn',in_channels=in_channels, out_labels=out_labels)
+	def __init__(self,model_id,in_channels=3,out_labels=2,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
+		super().__init__(model_id,encoder='vit2', decoder='cnn',in_channels=in_channels, out_labels=out_labels,
+			cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)
 		self.model_name = "unet_vit2_cnn"
 		self.model_id   = model_id
 
 
 class UNet_ViT2_ViT(UNet):
-	def __init__(self,model_id,in_channels=3,out_labels=2):
-		super().__init__(model_id,encoder='vit2', decoder='vit',in_channels=in_channels, out_labels=out_labels)
+	def __init__(self,model_id,in_channels=3,out_labels=2,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
+		super().__init__(model_id,encoder='vit2', decoder='vit',in_channels=in_channels, out_labels=out_labels,
+			cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)	
 		self.model_name = "unet_vit2_vit"
 		self.model_id   = model_id
 
@@ -639,7 +645,7 @@ def get_model_parameter_size(model):
 	named_params     = {n: sum(p.numel() for p in m.parameters() if p.requires_grad) for n,m in model.named_children()}
 
 	# (SOMEWHAT) PRETTY PRINT
-	print("-"*40)
+	print('\n' + "-"*40)
 	print(f"{model.model_name}")
 	print("-"*40)
 	print(f"Total:     {all_params}")
@@ -655,28 +661,17 @@ def get_model_parameter_size(model):
 ################################################################################
 if __name__ == '__main__':
 
-	# model = UNet_CNN_CNN(model_id=999)
-
-	get_model_memory_size(model)
-	get_model_parameter_size(model)
-
 	#DO SOME CHECKS
-	# B, C, H, W = 2, 3, 256, 256
-	# x = torch.randn(B, C, H, W)
+	variations = [UNet_CNN_CNN,UNet_ViT_CNN,UNet_CNN_ViT,UNet_ViT_ViT]
 
-	variations = [
-		('cnn', 'cnn'),
-		('cnn', 'vit'),
-		('vit', 'cnn'),
-		('vit', 'vit')
-	]
+	for v in variations:
+		kwargs = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':4}
+		model = v(model_id=999,**kwargs)
 
-	for enc, dec in variations:
-		model = UNet(model_id=999,encoder=enc,decoder=dec)
-
-		get_model_memory_size(model)
+		# get_model_memory_size(model)
 		get_model_parameter_size(model)
-				
+
+
 		# model.eval()
 		# with torch.no_grad():
 			# out = model(x)
