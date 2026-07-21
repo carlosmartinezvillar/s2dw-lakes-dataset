@@ -554,7 +554,8 @@ class UNet(nn.Module):
 		self.model_name = "unet_modular"
 
 		# LAYERS
-		self.in_layer  = nn.Conv2d(in_channels,channels,3,1,1,bias=True)
+		if encoder != 'vit2':
+			self.in_layer  = nn.Conv2d(in_channels,channels,3,1,1,bias=True)
 		self.encoder   = _ENCODERS[encoder](cnn_layers,vit_layers,channels,mlp_ratio)
 		self.decoder   = _DECODERS[decoder](cnn_layers,vit_layers,channels,mlp_ratio)
 		self.out_layer = nn.Conv2d(channels,out_labels,kernel_size=1,padding=0)
