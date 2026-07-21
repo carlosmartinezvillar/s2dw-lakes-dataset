@@ -507,12 +507,14 @@ if __name__ == '__main__':
 		print(f"[BATCH {j+1}/{len(chunk_queue)}]")
 
 		########## COPY DATA IN CHUNK ####################
-		for safe_path,label_path in chunk:
-			sp.run(["cp","-v","-r",f"{S2_DIR}/{safe_path}",WORK_DIR]) # COPY BANDS
-			sp.run(["cp","-v",f"{DW_DIR}/{label_path}",WORK_DIR]) # COPY LABEL
+		N = len(chunk)
+		for i,(safe_path,label_path) in enumerate(chunk):
+			sp.run(["cp","-r",f"{S2_DIR}/{safe_path}",WORK_DIR]) # COPY BANDS (flat on dir)
+			sp.run(["cp",f"{DW_DIR}/{label_path}",WORK_DIR]) # COPY LABEL
+			if (i+1) % 10 == 0 or (i+1) == N:
+				print(f"Copied {i+1}/{N} image-label pairs")
 
 		########## CHIP ##################################
-		N = len(chunk)
 		for i,(safe_path,label_path) in enumerate(chunk):
 			safe_local_path  = f"{WORK_DIR}/{safe_path.split('/')[-1]}" #remove 'eodata/../'
 			label_local_path = f"{WORK_DIR}/{label_path}"
