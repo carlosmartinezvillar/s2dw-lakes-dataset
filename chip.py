@@ -28,7 +28,7 @@ OVERLAP_MIN = 492
 OVERLAP_MAX = RASTER_SIZE - 492
 
 # Multiprocessing settings
-N_PROC = 12
+N_PROC = 6
 
 # Globals set by argparse
 WORK_DIR  = None #temp for s2,dw -- fast,local
@@ -504,7 +504,7 @@ if __name__ == '__main__':
 
 	########## BATCH PROCESS #########################
 	for j,chunk in enumerate(chunk_queue):
-		print(f"[BATCH {j+1}/{len(chunk_queue)}]")
+		print(f"[BATCH {j+1}/{len(chunk_queue)}]",flush=True)
 
 		########## COPY DATA IN CHUNK ####################
 		N = len(chunk)
