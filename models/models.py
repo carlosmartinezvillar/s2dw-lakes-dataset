@@ -564,7 +564,7 @@ class UNet(nn.Module):
 
 
 ################################################################################
-# SUBCLASSES
+# UNET SUBCLASSES
 ################################################################################
 class UNet_CNN_CNN(UNet):
 	def __init__(self,model_id,in_channels=3,out_labels=2):
@@ -609,25 +609,72 @@ class UNet_ViT2_ViT(UNet):
 
 
 ################################################################################
+# FUNCTIONS
+################################################################################
+def get_model_memory_size(model):
+
+	# DUMMY INPUT
+	x = torch.randn(8,3,256,256)
+
+	# TO DEV
+	model = model.cuda()
+	x     = x.cuda()
+
+	# FORWARD & BACKWARD
+	out  = model(x)
+	loss = out.sum()
+	loss.backward()
+
+	#PRINT
+	print(f"{model.model_name}:",end=' ')
+	print(torch.cuda.max_memory_allocated()/1e9,"GB")
+
+
+def get_model_parameter_size(model):
+	# COUNT STUFF
+	all_params       = sum(p.numel() for p in model.parameters())
+	trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+	named_params     = [n: sum(p.numel() for p in m.parameters if p.requires_grad) for n,m in model.named_children()]
+
+	# (SOMEWHAT) PRETTY PRINT
+	print("-"*40)
+	print(f"{model.model_name}")
+	print("-"*40)
+	print(f"Total:     {all_params}")
+	print(f"Trainable: {trainable_params}")
+	print(f"-"*40)
+	for name,count in named_params.items():
+		print(f"{name}: {count}")
+	print("-"*40)
+
+
+################################################################################
 # MAIN
 ################################################################################
 if __name__ == '__main__':
 
+	model = UNet_CNN_CNN(model_id=999)
+
+	get_model_memory_size(model)
+	get_model_parameter_size(model)
+
 	#DO SOME CHECKS
-	B, C, H, W = 2, 3, 256, 256
-	x = torch.randn(B, C, H, W)
+	# B, C, H, W = 2, 3, 256, 256
+	# x = torch.randn(B, C, H, W)
 
-	variations = [
-		('cnn', 'cnn'),
-		('cnn', 'vit'),
-		('vit', 'cnn'),
-		('vit', 'vit')
-	]
+	# variations = [
+	# 	('cnn', 'cnn'),
+	# 	('cnn', 'vit'),
+	# 	('vit', 'cnn'),
+	# 	('vit', 'vit'),
+	# 	('vit2','cnn'),
+	# 	('vit2','vit')
+	# ]
 
-	for enc, dec in variations:
-		model = UNet(model_id=0,encoder=enc,decoder=dec)
-		model.eval()
-		with torch.no_grad():
-			out = model(x)
-		params = sum(p.numel() for p in model.parameters()) / 1e6
-		print(f'output: {tuple(out.shape)}  params: {params:.1f}M')
+	# for enc, dec in variations:
+		# model = UNet(model_id=0,encoder=enc,decoder=dec)
+		# model.eval()
+		# with torch.no_grad():
+			# out = model(x)
+		# params = sum(p.numel() for p in model.parameters()) / 1e6
+		# print(f'output: {tuple(out.shape)}  params: {params:.1f}M')
