@@ -28,7 +28,7 @@ OVERLAP_MIN = 492
 OVERLAP_MAX = RASTER_SIZE - 492
 
 # Multiprocessing settings
-N_PROC = 6
+N_PROC = 12
 
 # Globals set by argparse
 WORK_DIR  = None #temp for s2,dw -- fast,local
