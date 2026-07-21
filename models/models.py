@@ -501,8 +501,8 @@ class CNNDecoder(nn.Module):
 	'''
 	5-stage CNN.
 	'''
-	def __init__(self):
-		super().__init__(cnn_layers=2,channels=32)
+	def __init__(self,cnn_layers=2,channels=32):
+		super().__init__()
 		up_params = {'kernel_size': 4, 'stride': 2,'padding': 1, 'bias': True}
 
 		self.decoder_1 = ConvBlock(channels*16,depth=cnn_layers)
