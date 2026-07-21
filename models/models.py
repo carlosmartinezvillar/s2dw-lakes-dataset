@@ -624,7 +624,7 @@ class UNet_ViT2_ViT(UNet):
 def get_model_memory_size(model):
 
 	# DUMMY INPUT
-	x = torch.randn(8,3,256,256)
+	x = torch.randn(16,3,256,256)
 
 	# TO DEV
 	model = model.cuda()
