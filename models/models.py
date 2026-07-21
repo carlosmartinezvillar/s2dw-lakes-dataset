@@ -420,7 +420,7 @@ class ViTEncoderStemmed(nn.Module):
 
 		#CNN STEM
 		self.stem_1 = nn.Sequential(
-			nn.Conv2d(32,32,**stem_params),
+			nn.Conv2d(3,32,**stem_params),
 			nn.GroupNorm(1,32),
 			nn.GELU()
 		)
