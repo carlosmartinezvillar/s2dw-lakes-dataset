@@ -342,8 +342,8 @@ class CNNEncoder(nn.Module):
 	Channels: 32 -> 64 -> 128 -> 256 -> 512
 	Spatial:  H  -> H/2 -> H/4 -> H/8 -> H/16
 	"""	
-	def __init__(self):
-		super().__init__(cnn_layers=2,channels=32)
+	def __init__(self,cnn_layers=2,channels=32):
+		super().__init__()
 		down_params = {'kernel_size': 3, 'stride': 2, 'padding': 1, 'bias': True}
 
 		self.encoder_1 = ConvBlock(channels,depth=cnn_layers)
