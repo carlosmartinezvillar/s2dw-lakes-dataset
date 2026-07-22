@@ -76,6 +76,12 @@ class Product():
 	def set_chip_base_str(self):
 		'''
 		Unique base name for all chips extracted from a product.
+		Set to:
+			{date}_{datastrip}_{tile}_{orbit}
+
+		When chipping (i.e. chip_image() is called), chip ids are set to:
+			{date}_{datastrip}_{tile}_{orbit}_{row}_{col}_{band or label}.tif
+			
 		'''
 		orbit = self.safe_id.split('_')[4]
 		return f"{self.label_path.split('/')[-1][:-4]}_{orbit}"

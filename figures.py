@@ -9,6 +9,7 @@ import os
 from PIL import Image
 import glob
 import math
+import argparse
 
 # HARD-CODED US STATE POLYGONS SOURCE -- CHANGE TO USE (see plot_tile_polygons() arguments)
 STATE_SHP = "../"
@@ -46,6 +47,16 @@ fig_size_wide=(16,4)
 ################################################################################
 # POLYGONS
 ################################################################################
+def filter_tiles(geo_df,drop):
+	'''
+	Parameters:
+	-----------
+	geo_df: gpd.GeoDataFrame
+	drop: [str]
+	'''
+	pass
+
+
 def plot_tile_polygons(us_geom):
 	'''
 	Plot a combined set of polygons for AOI and MGRS tiles.
@@ -57,6 +68,8 @@ def plot_tile_polygons(us_geom):
 	'''
 	# TILES IN DATASET
 	tile_geometries_file = "./search/search_results_geometries.tsv"
+
+
 	dropped_tiles = ["T11SKD","T11TKE"]
 
 	#LOAD AS GEODATAFRAME
@@ -66,6 +79,22 @@ def plot_tile_polygons(us_geom):
 	#PLOT
 	pass
 
+
+def plot_data_split_polygons(us_geom):
+
+	# with open('./split.txt','r') as fp:
+	# 	lines = fp.readlines()
+	# ...etc etc
+
+	te_tiles = ['11SQV', '10TEL', '10SFG']
+	va_tiles = ['10TFK' '11SLC' '10SEH']
+	tr_tiles = ['10TFL', '12TVK', '11SQA', '10SEJ', '10SGJ', '11SPS', '12TXL', '12TUL', '10TFM', '11SQU', '12TVM', '10TGK', '12SVG']
+
+	tile_geometries_file = "./search/search_results_geometries.tsv"
+
+
+
+	pass
 
 ################################################################################
 # ENTIRE TILE RASTERS
@@ -416,8 +445,8 @@ def plot_chip_bands(chip_path):
 	false_ir = Image.merge(mode='RGB',bands=[nir,r,g])
 
 	#PATHS
-	rgb_path      = f"./figures/{chip_path.split('/')[-1].replace(".tif","_rgb_.tif")}"
-	false_ir_path = f"./figures/{chip_path.split('/')[-1].replace(".tif","_nir_.tif")}"
+	rgb_path      = f"./figures/{chip_path.split('/')[-1].replace('.tif','_rgb_.tif')}"
+	false_ir_path = f"./figures/{chip_path.split('/')[-1].replace('.tif','_nir_.tif')}"
 
 	# SAVE
 	rgb.save(rgb_path)
@@ -450,7 +479,7 @@ def plot_chip(chip_path):
 	label = Image.open(chip_path.replace("_B0X.tif","_LBL.tif"))
 
 	# SET OUT PATH
-	chip_id  = chip_path.split('/')[-1].split("_B0X.tif")
+	chip_id  = chip_path.split('/')[-1].split("_B0X.tif")[0]
 	out_path = f"./figures/{chip_id}_ALL.png"
 
 	# PLOT
@@ -483,7 +512,6 @@ def plot_chip(chip_path):
 	# nrg = Image.merge('RGB',[new_n,new_r,new_g])
 	# nrg.save("./chip_ngr.jpg")
 
-
 	# LOG/STDOUT
 	print(f"File saved to {out_path}.")
 
@@ -496,6 +524,9 @@ def plot_chip_band_histogram(chip_path):
 	# CHECK DIR
 	assert os.path.isfile(chip_path), f"No chip file found in path {chip_path}"
 	red,grn,blu,nir = Image.open(chip_path).split()
+
+	chip_id  = chip_path.split('/')[-1].split("_B0X.tif")[0]
+	out_path = f"./figures/{chip_id}_hist.png"
 
 	# PLOT
 	bins = 256
@@ -516,8 +547,10 @@ def plot_chip_band_histogram(chip_path):
 	axes[3].set_title("Blue")
 	axes[3].set_xlim(0,255)
 	plt.tight_layout()
-	plt.savefig(f"./figures/{chip_id}_hist.png")
+	plt.savefig(out_path)
 	plt.close()
+
+	print(f"File saved to {out_path}.")
 
 
 ################################################################################
@@ -676,19 +709,35 @@ def plot_rasters_per_tile(data_dir):
 	pass
 
 
+def parse_args():
+	parser = argparse.ArgumentParser()
+	parser.add_argument('--chip-dir',required=False,default=None,help='Dataset (chip) directory.')
+	args = parser.parse_args()
+
+	if args.chip_dir is not None:
+		assert os.path.isdir(args.chip_dir), f"Chip dir {args.chip_dir} not found."
+		if args.chip_dir[-1] == '/':
+			args.chip_dir = args.chip_dir[:-1]
+
+	return args
+
 ################################################################################
 # MAIN
 ################################################################################
 if __name__ == '__main__':
 
-	dw_tile_path = "/Users/ci/Desktop/20250627T184941_20250627T185915_T10SEJ.tif"
-
+	# dw_tile_path = "/Users/ci/Desktop/20250627T184941_20250627T185915_T10SEJ.tif"
 	# plot_tile_label(dw_tile_path)
 	# plot_tile_label_original(dw_tile_path)
 
-	# chip_path = ""
-	# plot_chip(chip_path)
+	args = parse_args()
 
+	if args.chip_dir is not None:
+		chip_path = f"{args.chip_dir}/20250108T185751_20250108T185745_T10SEH_R113_25_17_B0X.tif"
+		plot_chip(chip_path)
+		plot_chip_band_histogram(chip_path)
 
+	plot_tile_polygons()
+	plot_data_split_polygons() # <<-- 
 
 	pass

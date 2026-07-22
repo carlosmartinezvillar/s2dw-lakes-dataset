@@ -14,28 +14,42 @@ import numpy as np
 import random
 import glob
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+################################################################################
+# GLOBAL VARIABLES -- SAMPLING
+################################################################################
+DEFAULT_SEED = 476 #as published
+NR_TILES     = 3   #nr for validation and testing -- as published
 
-DEFAULT_SEED = 476 #reproduce what's split.txt
-NR_TILES     = 3   #nr for validation and testing
-
+################################################################################
+# FUNCTIONS
+################################################################################
 def build_tree(chip_names):
 	'''
+	Build a dict with the nested structure:
+
 	{zone}
 	|-> {tile}
 		|-> {raster}
 			|--> [chips]
+
+	Passed string list follows:
+		[YYYYMMDDTHHMMSS_YYYYMMDDTHHMMSS_T00ZBB_R000_00_00]
+
+	{date}_{datastrip}_{tile}_{orbit}_{row}_{col}
 	'''
 	tree = {}
 
-	# Iterate thru chips
+	# FOR EACH CHIP STR
 	for chip in chip_names:
-		#Get strings
+
+		# GET STRINGS
 		raster = chip[0:-11]
 		tile   = chip[-16:-11]
 		zone   = chip[-16:-13]
 
-		# Append to tree
+		# APPEND TO TREE -- I believe there's a better/pythonic way to do this
 		if zone in tree:
 			if tile in tree[zone]:
 				if raster in tree[zone][tile]:
@@ -51,25 +65,39 @@ def build_tree(chip_names):
 	return tree
 
 
-if __name__ == '__main__':
-
-	#CHECK DIR
+def parse_args():
+	'''
+	Get dir and check.
+	'''
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--chip-dir',default=None,required=True,
 		help='Dataset directory.')
 	args = parser.parse_args()
+	assert args.chip_dir is not None, "split.py: Incorrect data dir argument."
 	assert os.path.isdir(args.chip_dir), "split.py: Incorrect data dir argument."
+	return args
+
+
+################################################################################
+#MAIN
+################################################################################
+if __name__ == '__main__':
 
 	#FIX SEEDS
 	np.random.seed(DEFAULT_SEED)
 	random.seed(DEFAULT_SEED)
 
+	args = parse_args()
+
 	#GET CHIP NAMES
 	band_files  = sorted(glob.glob("*_B0X.tif",root_dir=args.chip_dir))
-	chips       = [_[0:-8] for _ in band_files] #19456 X 53
+
+	#nr. chips x {date}_{datastrip}_{tile}_{orbit}_{row}_{col}_{band or label}.tif
+	#nr. chips x YYYYMMDDTHHMMSS_YYYYMMDDTHHMMSS_T00AAA_R000_00_00_B0X.tif
+	chip_names  = [_[0:-8] for _ in band_files]
 
 	#TREE
-	tree = build_tree(chips)
+	tree = build_tree(chip_names)
 
 	#GET TEST TILES
 	test_zones = np.random.choice(sorted(tree),NR_TILES,replace=False)
@@ -86,7 +114,7 @@ if __name__ == '__main__':
 	validate_tiles = np.random.choice(sorted(trainvalidate_tiles),NR_TILES,replace=False)
 	training_tiles = set(trainvalidate_tiles).difference(validate_tiles)
 
-	#LOG SPLIT
+	#LOG
 	print(f"TEST TILES:       {test_tiles}")
 	print(f"VALIDATION TILES: {validate_tiles}")
 	print(f"TRAIN TILES:      {training_tiles}")
@@ -95,30 +123,29 @@ if __name__ == '__main__':
 		fp.write(f"VALIDATION TILES: {validate_tiles}\n")
 		fp.write(f"TRAIN TILES:      {training_tiles}\n")
 
-	#SAVE IN SEPARATAE FOLDERS
+	#MOVE CHIPS TO SEPARATE FOLDERS -- same location of chip_dir
 	chip_dir = args.chip_dir
 	if chip_dir[-1] == '/':
 		chip_dir = chip_dir[:-1]
-	# new_dir = '/'.join([*chip_dir.split('/')[0:-1],'chips_sorted'])
 	new_dir = chip_dir + '_sorted'
 	os.mkdir(new_dir)
 	os.mkdir(f'{new_dir}/training')
 	os.mkdir(f'{new_dir}/validation')
 	os.mkdir(f'{new_dir}/testing')
 
-	print("COPYING VALIDATION FILES")
+	print("COPYING VALIDATION FILES...")
 	for tile in validate_tiles:
 		tile_files = glob.glob(f"*_T{tile}_*.tif",root_dir=args.chip_dir)
 		for file in tile_files:
 			shutil.copy(f"{args.chip_dir}/{file}",f"{new_dir}/validation/{file}",follow_symlinks=False)
 
-	print("COPYING TESTING FILES")
+	print("COPYING TESTING FILES...")
 	for tile in test_tiles:
 		tile_files = glob.glob(f"*_T{tile}_*.tif",root_dir=args.chip_dir)
 		for file in tile_files:
 			shutil.copy(f"{args.chip_dir}/{file}",f"{new_dir}/testing/{file}",follow_symlinks=False)
 
-	print("COPYING TRAINING FILES")
+	print("COPYING TRAINING FILES...")
 	for tile in training_tiles:
 		tile_files = glob.glob(f"*_T{tile}_*.tif",root_dir=args.chip_dir)
 		for file in tile_files:

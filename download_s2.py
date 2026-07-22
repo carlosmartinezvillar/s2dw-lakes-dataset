@@ -191,7 +191,10 @@ if __name__ == '__main__':
 		print(f"Searching {D.geometry} ...")
 		D.search_odata()
 
+	# DROPPED TILES -- See ./figures/tiles.png
 	D.drop_tiles_from_queue("T11SKD")
 	D.drop_tiles_from_queue("T11TKE")
+
+	# SAVE LIST OF S3 PATHS TO DOWNLOAD
 	D.log_search()
 

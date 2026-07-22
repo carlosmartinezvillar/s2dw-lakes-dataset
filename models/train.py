@@ -392,10 +392,6 @@ if __name__ == "__main__":
 		set_seed(HP['seed'])
 
 	#---------- LOAD MODEL ------------------------------------------------------------------------
-	# HP['mlp_ratio']: 2,4
-	# HP['vit_layers']: 1,2
-	# HP['cnn_layers']: 2,3
-	# HP['channels']: 16,32
 	net = eval(f"models.{HP['model']}({HP['id']},{HP['bands']},{HP['labels']},{HP['cnn_layers']},{HP['vit_layers']},{HP['channels']},{HP['mlp_ratio']})")
 	net = net.to(CUDA_DEV)
 	net = torch.compile(net)
@@ -417,10 +413,13 @@ if __name__ == "__main__":
 		optimizer = torch.optim.AdamW(net.parameters(),lr=HP['lrate'],weight_decay=HP["decay"])
 
 	#---------- DATALOADERS ------------------------------------------------------------------------
-	train_transform = v2.Compose([
-		v2.RandomHorizontalFlip(p=0.5),
-		v2.RandomVerticalFlip(p=0.5)
-	])
+	# train_transform = v2.Compose([
+	# 	v2.RandomHorizontalFlip(p=0.5),
+	# 	v2.RandomVerticalFlip(p=0.5),
+	# 	v2.ColorJitter(brightness=0.2, contrast=0.2),
+	# 	v2.GaussianNoise(sigma=0.02),
+	# ])
+	train_transform = dataloader.TrainTransform() #bands and label steps need to be distinct.
 
 	tr_dataset = dataloader.SentinelDataset(f"{DATA_DIR}/training",
 		n_bands=HP['bands'],
