@@ -1,7 +1,6 @@
 import os
 import numpy as np
 import torch
-import torchvision.transforms.v2 as v2
 import random
 import time
 # from tqdm import tqdm
@@ -65,12 +64,34 @@ class Logger():
 			fp.write('\t'.join(row) + '\n')
 
 
+class EMA:
+	'''
+	Exponential moving average for IoU to decide on best checkpoint (by IoU).
+	Smoothing is determined by 'alpha' parameter.
+	'''
+	def __init__(self,alpha=0.3):
+		self.alpha = alpha
+		self.value = None
+
+
+	def update(self,new_value):
+		if self.value is None:
+			self.value = new_value #first step
+		else:
+			self.value = self.alpha * new_value + (1-self.alpha) * self.value #ema
+		return self.value
+
+
 ####################################################################################################
 # SOME HELPER FUNCTIONS
 ####################################################################################################
 def parse_args():
+	'''
+	Load args passed for hyperparameter file, chip dir, log dir, model type,
+	model checkpoint dir.
+	'''
+	# DEFINITION
 	parser = argparse.ArgumentParser()
-
 	required = parser.add_argument_group('Required arguments')
 	required.add_argument('--data-dir',required=True,
 		help='Input dataset directory.')
@@ -83,13 +104,14 @@ def parse_args():
 	required.add_argument('--id',required=True,type=int,
 		help='Model id number in JSON hyperparameter file.')
 
+	# OPTIONAL
 	optional = parser.add_argument_group('Optional arguments')
 	optional.add_argument('--gpu',required=False,type=int,default=0,
 		help='GPU id to train in, if different than 0. Useful to select a gpu in a multi-gpu machine.')
 	optional.add_argument('--full',required=False,action='store_true',default=False,
 		help='Train on both training and validation sets (training final model).')
 
-
+	# LOAD 
 	args = parser.parse_args()
 
 	# CHECK HERE
@@ -97,6 +119,7 @@ def parse_args():
 	assert os.path.isdir(args.net_dir), f"No path found for checkpoint dir in {args.net_dir}"
 	assert os.path.isdir(args.log_dir), f"No path found for log dir {args.log_dir}"
 	assert os.path.isfile(args.params), f"No hyperparameter found in {args.params}"
+	assert args.gpu >= 0, f"Got negative arg for GPU id {args.gpu}"
 	if args.gpu > 0:
 		assert args.gpu < torch.cuda.device_count(), "GPU INDEX OUT OF RANGE."
 
@@ -116,15 +139,21 @@ def save_checkpoint(path,model,optim,scaler,epoch,t_loss,v_loss,best=False):
 	'''
 	Saves model+optim+scaler state as .pth.tar 
 	'''
-	# save_path = f'{MODEL_DIR}/state_{epoch:03d}.pt'
+	# Standard path is:
+	# save_path = f'{MODEL_DIR}/_{epoch:03d}.pt'
 	if best == True:
 		save_path = f'{path}/best_{model.model_id:03}.pth.tar'
 	else:
 		save_path = f'{path}/model_{model.model_id:03}_e{epoch:02}.pth.tar'
+
+	# SAVE UNCOMPILED IF ALREAD COMPILED
+	raw_model = model._orig_mod if hasattr(model, '_orig_mod') else model
+
+
 	checkpoint = {'epoch': epoch,
 					't_loss': t_loss,
 					'v_loss': v_loss,
-					'model_state_dict': model.state_dict(),
+					'model_state_dict': raw_model.state_dict(),
 					'optim_state_dict': optim.state_dict(),
 					'scaler_state_dict': scaler.state_dict()}
 	torch.save(checkpoint,save_path)
@@ -192,6 +221,9 @@ def total_time_decorator(orig_func):
 
 
 def print_exploding_layers(total_norm,model):
+	'''
+	Only needed if best models are definitely not converging
+	'''
 	if torch.isinf(total_norm) or torch.isnan(total_norm):
 	    for name, param in model.named_parameters():
 	        if param.grad is not None:
@@ -200,7 +232,9 @@ def print_exploding_layers(total_norm,model):
 	                print(f"--- Layer: {name} | Norm: {param_norm}")		
 
 
-def load_hyperparameters(args)
+def load_hyperparameters(args):
+
+	# LOAD FILE
 	with open(args.params,'r') as fp:
 		hp_list = [json.loads(line) for line in fp.readlines() if line != "\n"]
 	assert len(hp_list) > 0, f"Got empty file for {args.params}"
@@ -211,19 +245,35 @@ def load_hyperparameters(args)
 
 	# SET DICT FOR CURRENT MODEL
 	HP = hp_list_indexed[args.id]
-	try:	
+
+	# CHECK DICT
+	try:
+		# CHECK INPUTS,OUTPUTS
 		assert HP['bands'] in [3,4], f"Incorrect band nr {HP['bands']} in hyperparameters"
 		assert HP['labels'] ==  2, f"Incorrect # of classes {HP['labels']} in hyperparameters"
+
+		#CHECK CLASS NAME MATCHES models.py
 		model_classes = [name for name,obj in inspect.getmembers(models,inspect.isclass)]
+
+		# CHECK MODEL, OPTIMIZER, SCHEDULER STRINGS.
 		assert HP['model'] in model_classes, "Incorrect model string in hyperparameter dict"
 		assert HP['optim'] in ["adam","sgd","adamw"], "Incorrect string for optimizer in dict."
 		assert HP['cycles'] in range(1,4), f"Incorrect cycles {HP['cycles']} in hyperparameters"
-		assert HP['loss'] in ["ce","ew","cw"], f"Incorrect string {HP['loss']} for loss in dict."		
+		assert HP['loss'] in ["ce","ew","cw"], f"Incorrect string {HP['loss']} for loss in dict."
+		assert HP['scheduler'] in ["cos","none"], f"Incorrect string {HP['scheduler']} in hyperparameters"
+
+		# CHECK MODEL SIZE PARAMS
+		assert HP['cnn_layers'] in [2,3], f"Incorrect # of conv layers {HP['cnn_layers']} in hyperparameters."
+		assert HP['vit_layers'] in [1,2], f"Incorrect # of ViT layers {HP['vit_layers']} in hyperparameters."
+		assert HP['channels'] in [16,32], f"Incorrect # of channels {HP['channels']} in hyperparameters."
+		assert HP['mlp_ratio'] in [2,4], f"Incorrect mlp dimension {HP['mlp_ratio']} in hyperparameters."
+
 	except AssertionError:
 		print(f"hparams file:  {args.params}")
 		print(f"model id/line: {HP['id']}")
 		print("-"*60)
 		raise
+
 	return HP
 
 def format_stdout_metrics(prefix, loss, acc, iou, n_classes):
@@ -256,8 +306,11 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 	# LOGS
 	log_file_path = f'{LOG_DIR}/epochs_{model.model_id:03}.tsv'
 	logger        = Logger(log_file_path,n_classes)
-	best_iou   = 0.0
+
+	# best_iou   = 0.0
 	best_epoch = 0
+	best_iou_ema = 0.0
+	ema_iou = EMA()
 
 	for epoch in range(epochs):
 
@@ -365,18 +418,23 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 			'tacc': tr_acc, 'ttpr':tr_tpr,'tppv':tr_ppv,'tiou': tr_iou, 
 			'vacc': va_acc, 'vtpr': va_tpr, 'vppv': va_ppv, 'viou': va_iou})
 
-		# SAVE MODEL
+		# EPOCH VALIDATION IoU -- BEST METRIC
 		if n_classes > 2:
 			epoch_iou = va_iou.mean().item() #mIoU for 3+ classes
 		else:
 			epoch_iou = va_iou[1].item() #true label iou for 2 classes
 
-		if best_iou < epoch_iou:
-			best_iou   = epoch_iou
+		# BEST MODEL BY SMOOTHED METRIC
+		smoothed_iou = ema_iou.update(epoch_iou)
+		print(f"EMA IoU: {smoothed_iou:.5f}")
+
+		if epoch >= 5 and best_iou_ema < smoothed_iou:
+			# best_iou   = epoch_iou
+			best_iou_ema = smoothed_iou
 			best_epoch = epoch
 			save_checkpoint(MODEL_DIR,model,optimizer,scaler,epoch,loss_tr,loss_va,best=True)
 
-	print(f'Best validation IoU: {best_iou:.5f} -- Epoch {best_epoch}')
+	print(f'Best (EMA) validation IoU: {best_iou_ema:.5f} -- Epoch {best_epoch}')
 
 
 
@@ -388,20 +446,20 @@ if __name__ == "__main__":
 	HP = load_hyperparameters(args)
 
 	#---------- SET SEEDS -------------------------------------------------------------------------
-	if HP['seed'] != 0:
+	if HP['seed'] != 0: #If zero in dict, set as 'completely' random.
 		set_seed(HP['seed'])
 
 	#---------- LOAD MODEL ------------------------------------------------------------------------
-	net = eval(f"models.{HP['model']}({HP['id']},{HP['bands']},{HP['labels']},{HP['cnn_layers']},{HP['vit_layers']},{HP['channels']},{HP['mlp_ratio']})")
+	# net = eval(f"models.{HP['model']}({HP['id']},{HP['bands']},{HP['labels']},{HP['cnn_layers']},{HP['vit_layers']},{HP['channels']},{HP['mlp_ratio']})")
+	model = getattr(models,HP['model'])
+	net = model(HP['id'],HP['bands'],HP['labels'],HP['cnn_layers'],HP['vit_layers'],HP['channels'],HP['mlp_ratio'])
 	net = net.to(CUDA_DEV)
 	net = torch.compile(net)
 
 	#---------- LOSS ------------------------------------------------------------------------------
 	if HP['loss'] == "ce":
 		loss_fn = torch.nn.CrossEntropyLoss()
-	if HP['loss'] == "ew":
-		loss_fn = None
-	if HP['loss'] == "cw": #<<< --- Useful later...
+	if HP['loss'] == "cw": # <- Not needed since classes are balanced at ~47%
 		loss_fn = None
 
 	#---------- OPTIMIZER -------------------------------------------------------------------------

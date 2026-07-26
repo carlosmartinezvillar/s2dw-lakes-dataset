@@ -70,6 +70,7 @@ def get_chip_positive_count(file_path):
 
 	percentage_water = np.array(counts).sum() / (len(counts)*256*256)
 
+	print(f"Number of chips: {len(lines)}")
 	print(f"Proportion of water pixels: {round(percentage_water,4)}")
 
 

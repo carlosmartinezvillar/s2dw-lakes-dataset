@@ -17,7 +17,7 @@ import numpy as np
 
 def get_model_results(log_path):
 	'''
-	Read a log file
+	Read a log file. 1st line header. Each line is an epoch.
 	'''
 
 	# FILE EXISTS
@@ -67,8 +67,9 @@ def plot_training_log(log_path):
 	# FILE EXISTS
 	assert os.path.isfile(log_path), f"No log file found at {log_path}"
 
-	# GET ID
+	# GET IDs
 	model_id = log_path.rstrip('.tsv').split('_')[-1]
+	stage_nr = log_path.split('/')[-2]
 
 	# OPEN/READ
 	with open(log_path,'r') as fp:

@@ -213,7 +213,6 @@ if __name__ == '__main__':
 	hp_list_indexed = {row['id']:row for row in HP_LIST}
 	assert args.id in hp_list_indexed, f"MODEL ID '{args.id}' NOT IN HYPERPARAMETER FILE."
 	HP = hp_list_indexed[args.id]
-
 	n_bands         = HP['bands']
 	n_classes       = HP['labels']
 	batch_size      = HP['batch']
@@ -222,7 +221,9 @@ if __name__ == '__main__':
 
 	# LOAD MODEL TYPE & CHECKPOINT WEIGHTS
 	checkpoint_path = f"{MODEL_DIR}/best_{model_id:03}.pth.tar"
-	net = eval(f"models.{model_class_str}({model_id},{n_bands},{n_classes})")
+	# net = eval(f"models.{model_class_str}({model_id},{n_bands},{n_classes})")
+	model = getattr(models,models_class_str)
+	net = model(model_id,n_bands,n_classes)
 	net,_,_,_ = load_checkpoint(checkpoint_path,net)
 	net = net.to(CUDA_DEV)
 
