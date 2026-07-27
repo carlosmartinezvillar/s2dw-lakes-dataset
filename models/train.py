@@ -350,12 +350,8 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 			# BACKPROP
 			optimizer.zero_grad()
 			loss.backward()
-			# scaler.scale(loss).backward()
-			# scaler.unscale_(optimizer)
 			torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 			optimizer.step()
-			# scaler.step(optimizer)
-			# scaler.update()
 
 			# METRICS -- Loss
 			loss_sum_tr   += loss.detach() * X.size(0)
@@ -520,15 +516,20 @@ if __name__ == "__main__":
 		cosine_steps = (HP['epochs'] - warmup_steps) // HP['cycles']
 		warmup_sched = torch.optim.lr_scheduler.LinearLR(
 			optimizer,
-			start_factor=1e-8,
+			start_factor=1e-2,
 			end_factor=1.0,
 			total_iters=warmup_steps
 		)
-		cosine_sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+		# cosine_sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+			# optimizer,
+			# T_0=cosine_steps,
+			# T_mult=1,
+			# eta_min=0.0)
+		cosine_sched = torch.optim.lr_scheduler.ConstantLR( #testing if handoff is failing
 			optimizer,
-			T_0=cosine_steps,
-			T_mult=1,
-			eta_min=0.0)
+			factor=1.0,
+			total_iters=0
+		)
 		scheduler = torch.optim.lr_scheduler.SequentialLR(
 			optimizer,
 			schedulers=[warmup_sched,cosine_sched],
