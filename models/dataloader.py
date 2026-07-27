@@ -46,7 +46,7 @@ class TrainTransform:
 	Class for the augmentation performed during training. Image and label use
 	same geometric rotation/flip. Color jitter and blur applied only to bands.
 	'''
-	def __init__():
+	def __init__(self):
 		self.geometric = v2.Compose([
 			v2.RandomHorizontalFlip(p=0.5),
 			v2.RandomVerticalFlip(p=0.5)
