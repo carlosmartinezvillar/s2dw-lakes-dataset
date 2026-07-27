@@ -266,7 +266,7 @@ def load_hyperparameters(args):
 		assert HP['cnn_layers'] in [2,3], f"Incorrect # of conv layers {HP['cnn_layers']} in hyperparameters."
 		assert HP['vit_layers'] in [1,2], f"Incorrect # of ViT layers {HP['vit_layers']} in hyperparameters."
 		assert HP['channels'] in [16,32], f"Incorrect # of channels {HP['channels']} in hyperparameters."
-		assert HP['mlp_ratio'] in [2,4], f"Incorrect mlp dimension {HP['mlp_ratio']} in hyperparameters."
+		assert HP['mlp_ratio'] in [2,3,4,5], f"Incorrect mlp dimension {HP['mlp_ratio']} in hyperparameters."
 
 	except AssertionError:
 		print(f"hparams file:  {args.params}")

@@ -49,7 +49,7 @@ def set_hyperparameters(name):
 					'decay':round(decay[j],5),
 					'batch':int(batch[j]),					
 					'vit_layers':1, #base
-					'mlp_ratios':5, #base
+					'mlp_ratio':5, #base
 					'cnn_layers':2, #base
 					'channels':32   #base
 				}
