@@ -323,7 +323,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 		gpu_mat_va = torch.zeros((n_classes,n_classes),device=CUDA_DEV,dtype=torch.int64)
 
 		# Single epoch time
-		epoch_start_time = time.time()
+		epoch_start_time = time.perf_counter()
 		print(f'\nEpoch {epoch}/{epochs-1}')
 		print('-'*80,flush=True)
 
@@ -350,7 +350,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 			# BACKPROP
 			optimizer.zero_grad()
 			loss.backward()
-			torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+			torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1,0)
 			optimizer.step()
 
 			# METRICS -- Loss
@@ -412,7 +412,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 		# LOG EPOCH
 		############################################################
 		# TIME
-		epoch_time = time.time() - epoch_start_time
+		epoch_time = time.perf_counter() - epoch_start_time
 		print(f'\nEpoch time: {epoch_time:.2f}s')
 
 		# RESULTS
@@ -456,7 +456,7 @@ if __name__ == "__main__":
 	model = getattr(models,HP['model'])
 	net = model(HP['id'],HP['bands'],HP['labels'],HP['cnn_layers'],HP['vit_layers'],HP['channels'],HP['mlp_ratio'])
 	net = net.to(CUDA_DEV)
-	net = torch.compile(net)
+	# net = torch.compile(net)
 
 	#---------- LOSS ------------------------------------------------------------------------------
 	if HP['loss'] == "ce":
@@ -520,16 +520,16 @@ if __name__ == "__main__":
 			end_factor=1.0,
 			total_iters=warmup_steps
 		)
-		# cosine_sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-			# optimizer,
-			# T_0=cosine_steps,
-			# T_mult=1,
-			# eta_min=0.0)
-		cosine_sched = torch.optim.lr_scheduler.ConstantLR( #testing if handoff is failing
+		cosine_sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
 			optimizer,
-			factor=1.0,
-			total_iters=0
-		)
+			T_0=cosine_steps,
+			T_mult=1,
+			eta_min=0.0)
+		# cosine_sched = torch.optim.lr_scheduler.ConstantLR( #testing if handoff is failing
+			# optimizer,
+			# factor=1.0,
+			# total_iters=0
+		# )
 		scheduler = torch.optim.lr_scheduler.SequentialLR(
 			optimizer,
 			schedulers=[warmup_sched,cosine_sched],
