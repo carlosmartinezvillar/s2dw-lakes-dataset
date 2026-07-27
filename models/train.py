@@ -135,7 +135,7 @@ def parse_args():
 	return args
 
 
-def save_checkpoint(path,model,optim,scaler,epoch,t_loss,v_loss,best=False):
+def save_checkpoint(path,model,optim,epoch,t_loss,v_loss,best=False):
 	'''
 	Saves model+optim+scaler state as .pth.tar 
 	'''
@@ -149,13 +149,11 @@ def save_checkpoint(path,model,optim,scaler,epoch,t_loss,v_loss,best=False):
 	# SAVE UNCOMPILED IF ALREAD COMPILED
 	raw_model = model._orig_mod if hasattr(model, '_orig_mod') else model
 
-
 	checkpoint = {'epoch': epoch,
 					't_loss': t_loss,
 					'v_loss': v_loss,
 					'model_state_dict': raw_model.state_dict(),
-					'optim_state_dict': optim.state_dict(),
-					'scaler_state_dict': scaler.state_dict()}
+					'optim_state_dict': optim.state_dict()}
 	torch.save(checkpoint,save_path)
 
 
@@ -203,11 +201,17 @@ def update_confusion_matrix(confmat,T,Y,n_classes):
 	# confmat[1,0] += ((T==1) & (Y==0)).sum() #FN
 	# confmat[1,1] += ((T==1) & (Y==1)).sum() #TP
 
-	for k in range(n_classes*n_classes):
-		i = k // n_classes #row
-		j = k % n_classes #col
-		confmat[i,j] += ((T==i) & (Y==j)).sum()
+	# 2x2
+	# for k in range(n_classes*n_classes):
+		# i = k // n_classes #row
+		# j = k % n_classes #col
+		# confmat[i,j] += ((T==i) & (Y==j)).sum()
 
+	# Vectorized
+	# [0,1,2,3] = [TN,FP,FN,TP]
+	idx = (T.flatten()*n_classes + Y.flatten()).to(torch.int64)
+	binc = torch.bincount(idx,minlength=n_classes*n_classes)
+	confmat += binc.view(n_classes,n_classes)
 
 def total_time_decorator(orig_func):
 	@wraps(orig_func)
@@ -301,7 +305,7 @@ def train_full_set(model,dataloaders,optimizer,loss_fn,scaler,scheduler,epochs=1
 def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n_classes=2):
 
 	# AUTOMATIC MIXED PRECISION
-	scaler = torch.amp.GradScaler("cuda",enabled=True,init_scale=1024)
+	# scaler = torch.amp.GradScaler("cuda",enabled=True,init_scale=1024)
 
 	# LOGS
 	log_file_path = f'{LOG_DIR}/epochs_{model.model_id:03}.tsv'
@@ -339,17 +343,17 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 			T = T.to(CUDA_DEV,non_blocking=True)
 
 			# FORWARD
-			with torch.autocast(device_type="cuda", dtype=torch.float16,enabled=True):
+			with torch.autocast(device_type="cuda", dtype=torch.bfloat16,enabled=True):
 				output = model(X)
 				loss   = loss_fn(output,T)
 
 			# BACKPROP
 			optimizer.zero_grad()
-			scaler.scale(loss).backward()
-			scaler.unscale_(optimizer)
+			# scaler.scale(loss).backward()
+			# scaler.unscale_(optimizer)
 			torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-			scaler.step(optimizer)
-			scaler.update()
+			# scaler.step(optimizer)
+			# scaler.update()
 
 			# METRICS -- Loss
 			loss_sum_tr   += loss.detach() * X.size(0)
@@ -387,7 +391,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 				T = T.to(CUDA_DEV,non_blocking=True)
 
 				# FORWARD
-				with torch.autocast(device_type="cuda",dtype=torch.float16,enabled=True):
+				with torch.autocast(device_type="cuda",dtype=torch.bfloat16,enabled=True):
 					output = model(X)
 					loss   = loss_fn(output,T)
 				Y_soft,Y   = torch.max(output,1) #soft-prediction, hard-prediction
@@ -432,7 +436,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 			# best_iou   = epoch_iou
 			best_iou_ema = smoothed_iou
 			best_epoch = epoch
-			save_checkpoint(MODEL_DIR,model,optimizer,scaler,epoch,loss_tr,loss_va,best=True)
+			save_checkpoint(MODEL_DIR,model,optimizer,epoch,loss_tr,loss_va,best=True)
 
 	print(f'Best (EMA) validation IoU: {best_iou_ema:.5f} -- Epoch {best_epoch}')
 
