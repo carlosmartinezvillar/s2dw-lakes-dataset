@@ -336,7 +336,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 
 		#LOOP
 		model.train()		
-		for X,T in dataloaders['training']:
+		for i,(X,T) in enumerate(dataloaders['training']):
 
 			#TO DEVICE
 			X = X.to(CUDA_DEV,non_blocking=True)
@@ -346,6 +346,12 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 			with torch.autocast(device_type="cuda", dtype=torch.bfloat16,enabled=True):
 				output = model(X)
 				loss   = loss_fn(output,T)
+
+			if i==0 and epoch <=8:
+				with torch.no_grad(): # CHECKING COLLAPSE?
+					preds = output.argmax(1)
+					print(f"pred class balance: {preds.float().mean().item():.4f}")
+					print(f"logit std: {output.std().item():.6f}")
 
 			# BACKPROP
 			optimizer.zero_grad()
