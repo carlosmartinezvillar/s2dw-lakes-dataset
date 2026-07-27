@@ -349,9 +349,11 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 
 			# BACKPROP
 			optimizer.zero_grad()
+			loss.backward()
 			# scaler.scale(loss).backward()
 			# scaler.unscale_(optimizer)
 			torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+			optimizer.step()
 			# scaler.step(optimizer)
 			# scaler.update()
 
