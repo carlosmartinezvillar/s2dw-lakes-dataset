@@ -706,10 +706,10 @@ if __name__ == '__main__':
 		# get_model_parameter_size(model,i==0)
 
 	variations = [UNet_CNN_CNN,UNet_ViT_CNN,UNet_CNN_ViT,UNet_ViT_ViT]
-	tiny  = {'cnn_layers':2,'vit_layers':2,'channels':16,'mlp_ratio':2}
-	small = {'cnn_layers':3,'vit_layers':3,'channels':16,'mlp_ratio':2}
-	base  = {'cnn_layers':2,'vit_layers':2,'channels':32,'mlp_ratio':4}
-	large = {'cnn_layers':3,'vit_layers':3,'channels':32,'mlp_ratio':4}
+	tiny  = {'cnn_layers':2,'vit_layers':1,'channels':16,'mlp_ratio':5}
+	small = {'cnn_layers':3,'vit_layers':2,'channels':16,'mlp_ratio':5}
+	base  = {'cnn_layers':2,'vit_layers':1,'channels':32,'mlp_ratio':5}
+	large = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':5}
 	sizes = ["Tiny", "Small", "Base", "Large"]
 		
 	for j,kwargs in enumerate([tiny,small,base,large]):

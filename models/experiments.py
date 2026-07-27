@@ -22,18 +22,7 @@ def set_hyperparameters(name):
 	# STAGE 1 -- LEARNING RATE, BATCH SIZE, WEIGHT DECAY
 	if name == 'stage_1':
 		n_trials = 40
-		seed       = 476
-		epochs     = 25
-		scheduler  = "cos"
-		loss_func  = "ce"
-		bands      = 3
-		labels     = 2
-		vit_layers = 1 #base
-		cnn_layers = 2 #base
-		channels   = 32 #base
-		mlp_ratios = 4
-		models     = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
-
+		models   = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
 		rows = []
 
 		for i,m in enumerate(models):
@@ -48,7 +37,7 @@ def set_hyperparameters(name):
 					'id':model_id,
 					'model':m,
 					'seed':476,
-					'epochs':25,
+					'epochs':35,
 					'scheduler':"cos",
 					'eta_min':0.0,
 					'cycles': 1,
@@ -60,7 +49,7 @@ def set_hyperparameters(name):
 					'decay':round(decay[j],5),
 					'batch':int(batch[j]),					
 					'vit_layers':1, #base
-					'mlp_ratios':4, #base
+					'mlp_ratios':5, #base
 					'cnn_layers':2, #base
 					'channels':32   #base
 				}
@@ -210,6 +199,6 @@ def set_hyperparameters(name):
 if __name__ == '__main__':
 	set_seed(476) #Set seed to fix list of hyperparameters
 	set_hyperparameters('stage_1')
-	set_hyperparameters('stage_2')
-	set_hyperparameters('stage_3')
-	set_hyperparameters('stage_4')
+	# set_hyperparameters('stage_2')
+	# set_hyperparameters('stage_3')
+	# set_hyperparameters('stage_4')
