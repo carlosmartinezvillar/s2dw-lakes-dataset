@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 # import torch.nn.functional as F
 import math
+from torch.utils.flop_counter import FlopCounterMode
 
 ################################################################################
 # CNN Blocks
@@ -359,10 +360,10 @@ class CNNEncoder(nn.Module):
 		self.encoder_3 = ConvBlock(channels*4,depth=cnn_layers)
 
 		self.down_3    = nn.Conv2d(channels*4,channels*8,**down_params)		
-		self.encoder_4 = ConvBlock(channels*8)
+		self.encoder_4 = ConvBlock(channels*8,depth=cnn_layers)
 
 		self.down_4    = nn.Conv2d(channels*8,channels*16,**down_params)		
-		self.encoder_5 = ConvBlock(channels*16)
+		self.encoder_5 = ConvBlock(channels*16,depth=cnn_layers)
 
 
 	def forward(self,x):
@@ -413,34 +414,41 @@ class ViTEncoderStemmed(nn.Module):
 	Patch embedding on inputs HxW to H/4xW/4. CNN stem to pass high-dimension 
 	feature maps from encoder to decoder.
 	'''
-	def __init__(self,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
+	def __init__(self,in_channels=3,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
 		super().__init__()
 		stem_params = {'kernel_size': 3, 'stride': 1, 'padding': 1, 'bias': True}
 		down_params = {'kernel_size': 3, 'stride': 2, 'padding': 1, 'bias': True}
 
+
+		img_size   = 256 #actually fixed, not checking different version
+		patch_size = 4
+		self.patches_h = img_size // patch_size
+		self.patches_w = img_size // patch_size
+
 		#CNN STEM
 		self.stem_1 = nn.Sequential(
-			nn.Conv2d(3,32,**stem_params),
-			nn.GroupNorm(1,32),
+			nn.Conv2d(in_channels,channels,**stem_params),
+			nn.GroupNorm(1,channels),
 			nn.GELU()
 		)
-		self.down_1 = nn.Conv2d(32,64,**down_params)
+		self.down_1 = nn.Conv2d(channels,channels*2,**down_params)
 		self.stem_2 = nn.Sequential(
-			nn.Conv2d(64,64,**stem_params),
-			nn.GroupNorm(1,64),
+			nn.Conv2d(channels*2,channels*2,**stem_params),
+			nn.GroupNorm(1,channels*2),
 			nn.GELU()
 		)
 
 		# EMBEDDING AND POSITIONAL ENCODING
-		self.embed = PatchEmbedding(img_size=256,patch_size=4,in_channels=3,E=128)
-		self.pe    = SinusoidalPositionalEncoding2D(E=128,num_patches_h=64,num_patches_w=64)
+		self.E_dim = channels*4
+		self.embed = PatchEmbedding(img_size=img_size,patch_size=patch_size,in_channels=in_channels,E=self.E_dim)
+		self.pe    = SinusoidalPositionalEncoding2D(E=self.E_dim,num_patches_h=self.patches_h,num_patches_w=self.patches_w)
 
-		# ViT Layers
-		self.encoder_3 = ViTBlock(128,num_heads=2)
-		self.down_3    = nn.Conv2d(128,256,**down_params)
-		self.encoder_4 = ViTBlock(256,num_heads=4)
-		self.down_4    = nn.Conv2d(256,512,**down_params)		
-		self.encoder_5 = ViTBlock(512,num_heads=8)
+		# ViT LAYERS
+		self.encoder_3 = ViTBlock(channels*4,num_heads=2,mlp_ratio=mlp_ratio,depth=vit_layers)
+		self.down_3    = nn.Conv2d(channels*4,channels*8,**down_params)
+		self.encoder_4 = ViTBlock(channels*8,num_heads=4,mlp_ratio=mlp_ratio,depth=vit_layers)
+		self.down_4    = nn.Conv2d(channels*8,channels*16,**down_params)		
+		self.encoder_5 = ViTBlock(channels*16,num_heads=8,mlp_ratio=mlp_ratio,depth=vit_layers)
 
 
 	def forward(self,x):
@@ -449,7 +457,7 @@ class ViTEncoderStemmed(nn.Module):
 		enc_2 = self.stem_2(self.down_1(enc_1))
 
 		tokens = self.pe(self.embed(x))
-		bchw   = tokens.reshape(B,64,64,128).permute(0,3,1,2)
+		bchw   = tokens.reshape(B,self.patches_h,self.patches_w,self.E_dim).permute(0,3,1,2)
 
 		enc_3 = self.encoder_3(bchw)
 		enc_4 = self.encoder_4(self.down_3(enc_3))
@@ -554,8 +562,12 @@ class UNet(nn.Module):
 		self.model_name = "unet_modular"
 
 		# LAYERS
-		self.in_layer  = nn.Conv2d(in_channels,channels,3,1,1,bias=True)
-		self.encoder   = _ENCODERS[encoder](cnn_layers,vit_layers,channels,mlp_ratio)
+		if encoder == 'vit2':
+			self.in_layer = nn.Identity() #no op
+			self.encoder  = _ENCODERS[encoder](in_channels,cnn_layers,vit_layers,channels,mlp_ratio)
+		else:
+			self.in_layer = nn.Conv2d(in_channels,channels,3,1,1,bias=True)
+			self.encoder  = _ENCODERS[encoder](cnn_layers,vit_layers,channels,mlp_ratio)
 		self.decoder   = _DECODERS[decoder](cnn_layers,vit_layers,channels,mlp_ratio)
 		self.out_layer = nn.Conv2d(channels,out_labels,kernel_size=1,padding=0)
 
@@ -602,47 +614,21 @@ class UNet_ViT_ViT(UNet):
 		self.model_id   = model_id
 
 
-class UNet_ViT2_CNN(nn.Module):
+class UNet_ViT2_CNN(UNet):
 	def __init__(self,model_id,in_channels=3,out_labels=2,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
-		# super().__init__(model_id,encoder='vit2', decoder='cnn',in_channels=in_channels, out_labels=out_labels,
-			# cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)
-
-		super().__init__()
-
+		super().__init__(model_id,encoder='vit2', decoder='cnn',in_channels=in_channels, out_labels=out_labels,
+			cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)
 		self.model_name = "unet_vit2_cnn"
 		self.model_id   = model_id
 
-		# self.in_layer  = nn.Conv2d(in_channels,channels,3,1,1,bias=True)
-		self.encoder   = ViTEncoderStemmed(cnn_layers,vit_layers,channels,mlp_ratio)
-		self.decoder   = CNNDecoder(cnn_layers,vit_layers,channels,mlp_ratio)
-		self.out_layer = nn.Conv2d(channels,out_labels,kernel_size=1,padding=0)
 
-
-	def forward(self,x):
-		skips,enc_out = self.encoder(x)
-		dec_out       = self.decoder(enc_out,skips)
-		return self.out_layer(dec_out)
-
-
-class UNet_ViT2_ViT(nn.Module):
+class UNet_ViT2_ViT(UNet):
 	def __init__(self,model_id,in_channels=3,out_labels=2,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
-		# super().__init__(model_id,encoder='vit2', decoder='vit',in_channels=in_channels, out_labels=out_labels,
-			# cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)
-
-		super().__init__()
-
+		super().__init__(model_id,encoder='vit2', decoder='vit',in_channels=in_channels, out_labels=out_labels,
+			cnn_layers=cnn_layers,vit_layers=vit_layers,channels=channels,mlp_ratio=mlp_ratio)
 		self.model_name = "unet_vit2_vit"
 		self.model_id   = model_id
 
-		self.encoder   = ViTEncoderStemmed(cnn_layers,vit_layers,channels,mlp_ratio)
-		self.decoder   = ViTDecoder(cnn_layers,vit_layers,channels,mlp_ratio)
-		self.out_layer = nn.Conv2d(channels,out_labels,kernel_size=1,padding=0)
-
-
-	def forward(self,x):
-		skips,enc_out = self.encoder(x)
-		dec_out       = self.decoder(enc_out,skips)
-		return self.out_layer(dec_out)
 
 ################################################################################
 # FUNCTIONS
@@ -666,44 +652,73 @@ def get_model_memory_size(model):
 	print(torch.cuda.max_memory_allocated()/1e9,"GB")
 
 
-def get_model_parameter_size(model):
+def get_model_parameter_size(model,print_header=False):
 	# COUNT STUFF
-	all_params       = sum(p.numel() for p in model.parameters())
-	trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-	named_params     = {n: sum(p.numel() for p in m.parameters() if p.requires_grad) for n,m in model.named_children()}
+	all_params = sum(p.numel() for p in model.parameters())
+	trainable  = sum(p.numel() for p in model.parameters() if p.requires_grad)
+	named      = {n: sum(p.numel() for p in m.parameters() if p.requires_grad) for n,m in model.named_children()}
 
-	# (SOMEWHAT) PRETTY PRINT
-	print('\n' + "-"*40)
-	print(f"{model.model_name}")
-	print("-"*40)
-	print(f"Total:     {all_params}")
-	print(f"Trainable: {trainable_params}")
-	print(f"-"*40)
-	for name,count in named_params.items():
-		print(f"{name}: {count}")
-	print("-"*40)
+	# PRETTY PRINT
+	header = "| MODEL           | PARAMS    | TRAINABLE | ENCODER   | DECODER   |"
+	row = f"| {model.model_name:<15} | {all_params:>9} | {trainable:>9} | "
+	row += f"{named['encoder']:>9} | {named['decoder']:>9} |"
+	if print_header == True:
+		print(header)
+		print("-"*len(header))
+	print(row)
+
+
+def count_flops(model):
+
+	# DUMMY
+	x = torch.randn(16,3,256,256)
+
+	# TO DEV
+	model = model.cuda()
+	x     = x.cuda()
+
+	# COUNT FWD
+	flop_counter = FlopCounterMode(display=False)
+	with flop_counter:
+		with torch.no_grad():
+			model(x)
+
+	# PRINT
+	total_flops = flop_counter.get_total_flops()
+	print(f"{model.model_name}: {total_flops/1e9:.3f} GFLOPs")
+
+	return total_flops
 
 
 ################################################################################
 # MAIN
 ################################################################################
 if __name__ == '__main__':
+	# DO SOME CHECKS
+	# variations = [UNet_CNN_CNN,UNet_ViT_CNN,UNet_CNN_ViT,UNet_ViT_ViT,UNet_ViT2_CNN,UNet_ViT2_ViT]
+	# LARGEST MODELS
+	# kwargs = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':4}
+	# SMALLEST MODELS
+	# kwargs = {'cnn_layers':2,'vit_layers':1,'channels':16,'mlp_ratio':2}
+	# for i,v in enumerate(variations):
+		# model = v(model_id=999,**kwargs)
+		# get_model_memory_size(model)
+		# get_model_parameter_size(model,i==0)
 
-	#DO SOME CHECKS
-	variations = [UNet_CNN_CNN,UNet_ViT_CNN,UNet_CNN_ViT,UNet_ViT_ViT,UNet_ViT2_CNN,UNet_ViT2_ViT]
-
-	kwargs = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':4} #largest models
-
-	for v in variations:
+	variations = [UNet_CNN_CNN,UNet_ViT_CNN,UNet_CNN_ViT,UNet_ViT_ViT]
+	tiny  = {'cnn_layers':2,'vit_layers':2,'channels':16,'mlp_ratio':2}
+	small = {'cnn_layers':3,'vit_layers':3,'channels':16,'mlp_ratio':2}
+	base  = {'cnn_layers':2,'vit_layers':2,'channels':32,'mlp_ratio':4}
+	large = {'cnn_layers':3,'vit_layers':3,'channels':32,'mlp_ratio':4}
+	sizes = ["Tiny", "Small", "Base", "Large"]
 		
-		model = v(model_id=999,**kwargs)
+	for j,kwargs in enumerate([tiny,small,base,large]):
 
-		get_model_memory_size(model)
-		get_model_parameter_size(model)
+		print("\n",sizes[j])
 
+		for i,v in enumerate(variations):
 
-		# model.eval()
-		# with torch.no_grad():
-			# out = model(x)
-		# params = sum(p.numel() for p in model.parameters()) / 1e6
-		# print(f'output: {tuple(out.shape)}  params: {params:.1f}M')
+			model = v(model_id=999,**kwargs)
+			# get_model_memory_size(model)
+			get_model_parameter_size(model,i==0)
+			# count_flops(model)
