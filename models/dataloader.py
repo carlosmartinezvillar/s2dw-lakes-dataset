@@ -1,7 +1,7 @@
 import torch
 import torchvision as tv
 from PIL import Image
-import torchvision.transforms as transforms
+import torchvision.transforms as v1
 import torchvision.transforms.v2 as v2
 import glob
 

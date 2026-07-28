@@ -467,8 +467,9 @@ if __name__ == "__main__":
 	#---------- LOSS ------------------------------------------------------------------------------
 	if HP['loss'] == "ce":
 		loss_fn = torch.nn.CrossEntropyLoss()
-	if HP['loss'] == "cw": # <- Not needed since classes are balanced at ~47%
-		loss_fn = None
+	if HP['loss'] == "cw": # <- Not needed? ~47%
+		class_weights = torch.tensor([0.47,0.53],device=CUDA_DEV)
+		loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights)
 
 	#---------- OPTIMIZER -------------------------------------------------------------------------
 	if HP['optim'] == "adam":
@@ -490,7 +491,7 @@ if __name__ == "__main__":
 	tr_dataset = dataloader.SentinelDataset(f"{DATA_DIR}/training",
 		n_bands=HP['bands'],
 		n_labels=HP['labels'],
-		transform=train_transform)
+		transform=None)
 
 	va_dataset = dataloader.SentinelDataset(f"{DATA_DIR}/validation",
 		n_bands=HP['bands'],
