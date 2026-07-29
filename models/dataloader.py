@@ -1,5 +1,6 @@
 import torch
-import torchvision as tv
+import torchvision
+from torchvision import tv_tensors
 from PIL import Image
 import torchvision.transforms as v1
 import torchvision.transforms.v2 as v2
@@ -54,7 +55,7 @@ class TrainTransform:
 
 		self.intensity = v2.Compose([
 			v2.ColorJitter(brightness=0.2,contrast=0.2),
-			v2.GaussianNoise(sigma=0.02)
+			v2.GaussianNoise(sigma=0.02*255)
 		])
 
 
@@ -68,12 +69,12 @@ class TrainTransform:
 class SentinelDataset(torch.utils.data.Dataset):
 	def __init__(self,chip_dir,n_bands=3,n_labels=2,transform=None):
 
-		# GET LIST OF CHIPS
+		# GET LIST OF CHIPS/STRINGS
 		self.dir        = chip_dir
-		self.vnir_files = sorted(glob.glob(f"{chip_dir}/*_B0X.tif"))
-		self.ids        = [i[0:-8] for i in self.vnir_files]
+		self.band_files = sorted(glob.glob(f"{chip_dir}/*_B0X.tif"))
+		self.ids        = [i[0:-8] for i in self.band_files]
 
-		# NORMALIZING VARIABLES
+		# NORMALIZING CONSTANTS
 		self.mean = torch.tensor([123.30515418,132.73142713,131.5999535,115.50730149]).view(-1,1,1)
 		self.std  = torch.tensor([53.223368,51.52951993,53.70758823,55.61025949]).view(-1,1,1)
 
@@ -81,38 +82,38 @@ class SentinelDataset(torch.utils.data.Dataset):
 		if (n_bands!=3) and (n_bands!=4):
 			raise ValueError("Incorrect number of bands in dataloader.")
 		if n_bands == 3:
-			self.input_func = self.rgb_get
+			self.band_func = self.get_rgb
 			self.mean = self.mean[0:3]
 			self.std  = self.std[0:3]
 		if n_bands == 4:
-			self.input_func = self.vnir_get
+			self.band_func = self.get_vnir
 
 		# ADJUST LABEL INDICES ACCORDING TO NR OF LABELS
 		if (n_labels)!=3 and (n_labels!=2):
 			raise ValueError("Incorrect number of target labels.")
 		if n_labels == 2:
-			lbl_div = 255
+			self.lbl_div = 255
 		if n_labels == 3:
-			lbl_div = 127
+			self.lbl_div = 127
 
 		# REQUIRED TRANSFORMS FOR ALL INPUTS
-		self.input_transform = v2.Compose([
-			v2.ToImage(),
-			v2.ToDtype(torch.float32,scale=False)		
-		])
+		# self.input_transform = v2.Compose([
+			# v2.PILToTensor,
+			# v2.ToDtype(torch.float32,scale=False)
+		# ])
 
 		# REQUIRED TRANSFORMS FOR ALL LABELS
-		self.label_transform = v2.Compose([
-			v2.ToImage(),
-			LabelDivTransform(lbl_div=lbl_div), #ddp pickling not working w/ lambdas
-			v2.ToDtype(torch.int64)
-		])
+		# self.label_transform = v2.Compose([
+			# v2.PILToTensor,
+			# LabelDivTransform(lbl_div=self.lbl_div), #ddp pickling not working w/ lambdas
+			# v2.ToDtype(torch.int64)
+		# ])
 
 		# TRANSFORMS ONLY FOR TRAIN SET -- AUGMENTATION
 		self.train_transform = transform
 
 
-	def rgb_get(self,idx):
+	def get_rgb(self,idx):
 		'''
 		Return 3 bands.
 		'''
@@ -120,11 +121,24 @@ class SentinelDataset(torch.utils.data.Dataset):
 		return Image.merge(mode='RGB',bands=[r,g,b])
 
 
-	def vnir_get(self,idx):
+	def get_vnir(self,idx):
 		'''
 		Return 4 bands.
 		'''
 		return Image.open(f'{self.ids[idx]}_B0X.tif')
+
+
+	def load_image(self,idx):
+		img = v2.functional.pil_to_tensor(self.band_func(idx))
+		img = img.to(torch.float32)
+		return tv_tensors.Image(img)
+
+
+	def load_label(self,idx):
+		lbl = v2.functional.pil_to_tensor(Image.open(f'{self.ids[idx]}_LBL.tif'))
+		lbl = torch.squeeze(lbl,0)
+		lbl = torch.div(lbl,self.lbl_div,rounding_mode='floor').to(torch.int64)
+		return tv_tensors.Mask(lbl)
 
 
 	def __len__(self):
@@ -134,15 +148,14 @@ class SentinelDataset(torch.utils.data.Dataset):
 	def __getitem__(self,idx):
 
 		# GET RGB (or RGB-NIR) & LABELS
-		image = self.input_transform(self.input_func(idx))
-		label = self.label_transform(Image.open(f'{self.ids[idx]}_LBL.tif'))
+		image = self.load_image(idx)
+		label = self.load_label(idx)
 
 		# AUGMENT -- TRAINING
 		if self.train_transform:
 			image,label = self.train_transform(image,label)
 
-		# NORMALIZE
+		# NORMALIZE & RETURN
 		image = (image - self.mean) / self.std
-
 		return image,label
 
