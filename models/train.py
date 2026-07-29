@@ -491,7 +491,7 @@ if __name__ == "__main__":
 	tr_dataset = dataloader.SentinelDataset(f"{DATA_DIR}/training",
 		n_bands=HP['bands'],
 		n_labels=HP['labels'],
-		transform=None)
+		transform=train_transform)
 
 	va_dataset = dataloader.SentinelDataset(f"{DATA_DIR}/validation",
 		n_bands=HP['bands'],
