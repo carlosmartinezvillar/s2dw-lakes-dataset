@@ -76,7 +76,7 @@ class SentinelDataset(torch.utils.data.Dataset):
 		'''
 		Return 3 bands.
 		'''
-		r,g,b,_ = Image.open(f'{self.ids[idx]}_B0X.tif').split()		
+		r,g,b,_ = Image.open(f'{self.ids[idx]}_B0X.tif').split()	
 		return Image.merge(mode='RGB',bands=[r,g,b])
 
 

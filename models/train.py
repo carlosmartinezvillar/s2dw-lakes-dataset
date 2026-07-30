@@ -83,6 +83,11 @@ class EMA:
 
 
 class RecentBestTracker:
+	'''
+	Keeps track of 'n' .pth checkpoints saved as best. 
+	Updates queue and removes files no longer needed.
+	'''
+
 	def __init__(self,n=3):
 		self.n = n
 		self.paths = [] #FIFO queue for best 3 recent
@@ -93,6 +98,10 @@ class RecentBestTracker:
 			old_path = self.paths.pop(0)
 			if os.path.exists(old_path):
 				os.remove(old_path)	
+
+	def epochs(self):
+		return ", ".join([p.split('_')[-1][1:3] for in self.paths])
+
 
 ####################################################################################################
 # SOME HELPER FUNCTIONS
@@ -298,7 +307,7 @@ def load_hyperparameters(args):
 
 
 def format_stdout_metrics(prefix, loss, acc, iou, n_classes):
-	s = f'[{prefix}] LOSS: {loss:.5f} | ACC: {acc[-1]:.5f}'
+	s = f'[{prefix}] LOSS: {loss:.5f} | ACC_{len(acc)-1}: {acc[-1]:.5f}'
 	if n_classes > 2:
 		s += f' | mIoU: {iou.mean().item():.5f}'
 	else:
@@ -321,13 +330,14 @@ def train_full_set(model,dataloaders,optimizer,loss_fn,scaler,scheduler,epochs=1
 @total_time_decorator
 def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n_classes=2):
 
-	# AUTOMATIC MIXED PRECISION
+	# AUTOMATIC MIXED PRECISION -- switched to bfloat16
 	# scaler = torch.amp.GradScaler("cuda",enabled=True,init_scale=1024)
 
 	# LOGS
 	log_file_path = f'{LOG_DIR}/epochs_{model.model_id:03}.tsv'
 	logger        = Logger(log_file_path,n_classes)
 
+	# BEST MODEL/EPOCH METRICS
 	best_epoch = 0
 	best_iou   = 0.0
 	best_epoch_ema = 0
@@ -337,14 +347,16 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 
 	for epoch in range(epochs):
 
+		# STDOUT
+		print(f'\nEpoch {epoch}/{epochs-1}')
+		print('-'*80,flush=True)
+
 		# Confusion matrices in GPU to avoid sync
 		gpu_mat_tr = torch.zeros((n_classes,n_classes),device=CUDA_DEV,dtype=torch.int64) 
 		gpu_mat_va = torch.zeros((n_classes,n_classes),device=CUDA_DEV,dtype=torch.int64)
 
 		# Single epoch time
 		epoch_start_time = time.perf_counter()
-		print(f'\nEpoch {epoch}/{epochs-1}')
-		print('-'*80,flush=True)
 
 		############################################################
 		# TRAINING
@@ -366,11 +378,12 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 				output = model(X)
 				loss   = loss_fn(output,T)
 
-			if i==0 and epoch <=8:
-				with torch.no_grad(): # CHECKING COLLAPSE?
-					preds = output.argmax(1)
-					print(f"pred class balance: {preds.float().mean().item():.4f}")
-					print(f"logit std: {output.std().item():.6f}")
+			# CHECK IF COLLAPSING
+			# if i==0 and epoch <=8: 
+			# 	with torch.no_grad():
+			# 		preds = output.argmax(1)
+			# 		print(f"pred class balance: {preds.float().mean().item():.4f}")
+			# 		print(f"logit std: {output.std().item():.6f}")
 
 			# BACKPROP
 			optimizer.zero_grad()
@@ -428,8 +441,8 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 
 
 		# VALIDATION METRICS FOR LOG
-		loss_va    = (loss_sum_va / sample_sum_va).item() #-------------sync
-		cpu_mat_va = gpu_mat_va.cpu() #---------------------------------sync
+		loss_va    = (loss_sum_va / sample_sum_va).item() #-------------cpu-gpu sync
+		cpu_mat_va = gpu_mat_va.cpu() #---------------------------------cpu-gpu sync
 		va_ppv,va_tpr,va_acc,va_iou = calculate_metrics(cpu_mat_va)
 		print(format_stdout_metrics('V',loss_va,va_acc,va_iou,n_classes))
 
@@ -466,10 +479,14 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 			best_iou   = epoch_iou
 			best_epoch = epoch
 
-	print(f'Best validation IoU: {best_iou:.5f} -- Epoch {best_epoch}')
+	print(f'\nBest validation IoU: {best_iou:.5f} -- Epoch {best_epoch}')
 	print(f'Best (EMA) validation IoU: {best_iou_ema:.5f} -- Epoch {best_epoch_ema}')
+	print(f'Epochs saved: {recent_best.epochs()}')
 
 
+####################################################################################################
+# MAIN
+####################################################################################################
 if __name__ == "__main__":
 	#----------- ARGV -------------
 	args = parse_args()
@@ -482,7 +499,6 @@ if __name__ == "__main__":
 		set_seed(HP['seed'])
 
 	#---------- LOAD MODEL ------------------------------------------------------------------------
-	# net = eval(f"models.{HP['model']}({HP['id']},{HP['bands']},{HP['labels']},{HP['cnn_layers']},{HP['vit_layers']},{HP['channels']},{HP['mlp_ratio']})")
 	model = getattr(models,HP['model'])
 	net = model(HP['id'],HP['bands'],HP['labels'],HP['cnn_layers'],HP['vit_layers'],HP['channels'],HP['mlp_ratio'])
 	net = net.to(CUDA_DEV)
@@ -491,7 +507,7 @@ if __name__ == "__main__":
 	#---------- LOSS ------------------------------------------------------------------------------
 	if HP['loss'] == "ce":
 		loss_fn = torch.nn.CrossEntropyLoss()
-	if HP['loss'] == "cw": # <- Not needed? ~47%
+	if HP['loss'] == "cw": # <- Not needed? positive class ~47%
 		class_weights = torch.tensor([0.47,0.53],device=CUDA_DEV)
 		loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights)
 
@@ -504,13 +520,7 @@ if __name__ == "__main__":
 		optimizer = torch.optim.AdamW(net.parameters(),lr=HP['lrate'],weight_decay=HP["decay"])
 
 	#---------- DATALOADERS ------------------------------------------------------------------------
-	# train_transform = v2.Compose([
-	# 	v2.RandomHorizontalFlip(p=0.5),
-	# 	v2.RandomVerticalFlip(p=0.5),
-	# 	v2.ColorJitter(brightness=0.2, contrast=0.2),
-	# 	v2.GaussianNoise(sigma=0.02),
-	# ])
-	train_transform = dataloader.TrainTransform() #bands and label steps need to be distinct.
+	train_transform = dataloader.TrainTransform()
 
 	tr_dataset = dataloader.SentinelDataset(f"{DATA_DIR}/training",
 		n_bands=HP['bands'],
@@ -545,32 +555,31 @@ if __name__ == "__main__":
 	if HP['scheduler'] == "cos":
 		warmup_steps = 5
 		cosine_steps = (HP['epochs'] - warmup_steps) // HP['cycles']
+
 		warmup_sched = torch.optim.lr_scheduler.LinearLR(
 			optimizer,
 			start_factor=1e-2,
 			end_factor=1.0,
 			total_iters=warmup_steps
 		)
+
 		cosine_sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
 			optimizer,
 			T_0=cosine_steps,
 			T_mult=1,
 			eta_min=0.0)
-		# cosine_sched = torch.optim.lr_scheduler.ConstantLR( #testing if handoff is failing
-			# optimizer,
-			# factor=1.0,
-			# total_iters=0
-		# )
+
 		scheduler = torch.optim.lr_scheduler.SequentialLR(
 			optimizer,
 			schedulers=[warmup_sched,cosine_sched],
 			milestones=[warmup_steps]
 		)
+
 	if HP['scheduler'] == "none":
 		scheduler = None
 
 
-	#---------- TRAINING --------------------------------------------------------------------------
+	#---------- TRAINING/RUN -----------------------------------------------------------------------
 	train_and_validate(
 		net,
 		dataloaders,

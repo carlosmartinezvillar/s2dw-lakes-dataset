@@ -18,7 +18,14 @@ def set_seed(seed: int):
 def set_hyperparameters(name):
 	'''
 	Set combinations of hyperparameters.
+
+	variations = [UNet_CNN_CNN,UNet_ViT_CNN,UNet_CNN_ViT,UNet_ViT_ViT]
+	tiny  = {'cnn_layers':2,'vit_layers':1,'channels':16,'mlp_ratio':5}
+	small = {'cnn_layers':3,'vit_layers':2,'channels':16,'mlp_ratio':5}
+	base  = {'cnn_layers':2,'vit_layers':1,'channels':32,'mlp_ratio':5}
+	large = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':5}
 	'''
+
 	# STAGE 1 -- LEARNING RATE, BATCH SIZE, WEIGHT DECAY
 	if name == 'stage_1':
 		n_trials = 40
@@ -72,21 +79,16 @@ def set_hyperparameters(name):
 
 		models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
 		cnn_layers = [2,3] # follows vit_layers = [1,2]
-		channels   = [16,32] # follows mlp_ratios = [2,4]
+		channels   = [16,32]
 		
 		# Cross-product
-		cross_product = list(itertools.product(models,channels,cnn_layers))
+		cross_product = list(itertools.product(models,channels,cnn_layers)) #16 combinations
 		rows = []
 
 		for i in range(len(cross_product)):
 			model = cross_product[i][0]
 			channels = cross_product[i][1]
 			cnn_layers = cross_product[i][2]
-
-			if channels == 32:
-				mlp_ratios = 4
-			else:
-				mlp_ratios = 2
 
 			if cnn_layers == 3:
 				vit_layers = 2
@@ -109,7 +111,7 @@ def set_hyperparameters(name):
 				'decay':0, #missing
 				'batch':8, #missing
 				'vit_layers':vit_layers,
-				'mlp_ratios':mlp_ratios,
+				'mlp_ratio':5,
 				'cnn_layers':cnn_layers, 
 				'channels':channels  
 			}
@@ -156,7 +158,7 @@ def set_hyperparameters(name):
 			rows.append(sample)
 
 
-	# STAGE 4 -- CNN STEM+PATCHING VS PREVIOUS
+	# STAGE 4 -- CNN STEM+PATCHING VS PREVIOUS <<<- add CNN2 !
 	if name == 'stage_4':
 		models = ["UNet_ViT2_CNN","UNet_ViT2_ViT"]
 
