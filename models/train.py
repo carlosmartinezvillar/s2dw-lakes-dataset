@@ -100,7 +100,7 @@ class RecentBestTracker:
 				os.remove(old_path)	
 
 	def epochs(self):
-		return ", ".join([p.split('_')[-1][1:3] for in self.paths])
+		return ", ".join([p.split('_')[-1][1:3] for p in self.paths])
 
 
 ####################################################################################################
