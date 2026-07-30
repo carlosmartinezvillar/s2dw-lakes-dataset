@@ -89,7 +89,7 @@ class RecentBestTracker:
 
 	def update(self,path):
 		self.paths.append(path)
-		if len(paths) > self.n:
+		if len(self.paths) > self.n:
 			old_path = self.paths.pop(0)
 			if os.path.exists(old_path):
 				os.remove(old_path)	
