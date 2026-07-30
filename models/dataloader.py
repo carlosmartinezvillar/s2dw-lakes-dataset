@@ -6,42 +6,9 @@ import torchvision.transforms as v1
 import torchvision.transforms.v2 as v2
 import glob
 
-
-
 ################################################################################
 # CLASSES
 ################################################################################
-class LabelDivTransform(torch.nn.Module):
-	'''
-	Labels in the S2-DW dataset are stored as 255 and 0 for two classes and 255,
-	127, and 0 for 3 classes. This is for ease of visualization/inspection.
-	Labels are converted to values in [1,0] or [2,1,0] by floor division. In 
-	either case water is 1 and land is 0.
-	'''
-	def __init__(self,lbl_div):
-		super().__init__()
-		self.lbl_div = lbl_div
-
-
-	def forward(self,lbl):
-		'''
-		Parameters
-		----------
-		lbl : torch.Tensor
-		    The label array. It's ingested with dimension [1,H,W,L], i.e.: height, 
-		    width, and L number of 2 or 3 classes.
-		Returns
-		-------
-		torch.Tensor
-		    Converted label with values 0 and 1 for the binary case; and 0,1, and 2
-		    for three class arrays.	
-		'''		
-		lbl = torch.squeeze(lbl,0)
-		lbl = torch.div(lbl,self.lbl_div,rounding_mode='floor')
-		return lbl
-
-
-
 class TrainTransform:
 	'''
 	Class for the augmentation performed during training. Image and label use
@@ -50,11 +17,17 @@ class TrainTransform:
 	def __init__(self):
 		self.geometric = v2.Compose([
 			v2.RandomHorizontalFlip(p=0.5),
-			v2.RandomVerticalFlip(p=0.5)
+			v2.RandomVerticalFlip(p=0.5),
+			v2.RandomChoice([
+				v2.RandomRotation([0,0]),
+				v2.RandomRotation([90,90]),
+				v2.RandomRotation([180,180]),
+				v2.RandomRotation([270,270])
+			])
 		])
 
 		self.intensity = v2.Compose([
-			# v2.ColorJitter(brightness=0.1,contrast=0.1),
+			# v2.ColorJitter(brightness=0.1,contrast=0.1), #needs scaling/unscaling to [0,1]
 			v2.GaussianNoise(mean=0,sigma=0.02*255,clip=False)
 		])
 
@@ -116,12 +89,20 @@ class SentinelDataset(torch.utils.data.Dataset):
 
 
 	def load_image(self,idx):
+		'''
+		Return as float32 tensor wrapped in tv_tensor.Image class.
+		Values 0-255
+		'''
 		img = v2.functional.pil_to_tensor(self.band_func(idx))
 		img = img.to(torch.float32)
 		return tv_tensors.Image(img)
 
 
 	def load_label(self,idx):
+		'''
+		Adjust to discrete labels and return as tv_tensors.Mask class.
+		Values 0,1
+		'''
 		lbl = v2.functional.pil_to_tensor(Image.open(f'{self.ids[idx]}_LBL.tif'))
 		lbl = torch.squeeze(lbl,0)
 		lbl = torch.div(lbl,self.lbl_div,rounding_mode='floor').to(torch.int64)
@@ -134,9 +115,9 @@ class SentinelDataset(torch.utils.data.Dataset):
 
 	def __getitem__(self,idx):
 
-		# GET RGB (or RGB-NIR) & LABELS
-		image = self.load_image(idx)
-		label = self.load_label(idx)
+		# GET RGB (or RGB+NIR) & LABELS
+		image = self.load_image(idx) #tv_tensors.Image object
+		label = self.load_label(idx) #tv_tensors.Mask object
 
 		# AUGMENT -- TRAINING
 		if self.train_transform:
