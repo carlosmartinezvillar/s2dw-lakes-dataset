@@ -82,6 +82,18 @@ class EMA:
 		return self.value
 
 
+class RecentBestTracker:
+	def __init__(self,n=3):
+		self.n = n
+		self.paths = [] #FIFO queue for best 3 recent
+
+	def update(self,path):
+		self.paths.append(path)
+		if len(paths) > self.n:
+			old_path = self.paths.pop(0)
+			if os.path.exists(old_path):
+				os.remove(old_path)	
+
 ####################################################################################################
 # SOME HELPER FUNCTIONS
 ####################################################################################################
@@ -142,19 +154,23 @@ def save_checkpoint(path,model,optim,epoch,t_loss,v_loss,best=False):
 	# Standard path is:
 	# save_path = f'{MODEL_DIR}/_{epoch:03d}.pt'
 	if best == True:
-		save_path = f'{path}/best_{model.model_id:03}.pth.tar'
+		save_path = f'{path}/best_{model.model_id:03}_e{epoch:02}.pth.tar'
 	else:
 		save_path = f'{path}/model_{model.model_id:03}_e{epoch:02}.pth.tar'
 
 	# SAVE UNCOMPILED IF ALREAD COMPILED
 	raw_model = model._orig_mod if hasattr(model, '_orig_mod') else model
 
+	# SET CHECKPOINT AND WRITE
 	checkpoint = {'epoch': epoch,
 					't_loss': t_loss,
 					'v_loss': v_loss,
 					'model_state_dict': raw_model.state_dict(),
 					'optim_state_dict': optim.state_dict()}
 	torch.save(checkpoint,save_path)
+
+	# RETURN PATH STR
+	return save_path
 
 
 def set_seed(seed,cuda=True):
@@ -280,6 +296,7 @@ def load_hyperparameters(args):
 
 	return HP
 
+
 def format_stdout_metrics(prefix, loss, acc, iou, n_classes):
 	s = f'[{prefix}] LOSS: {loss:.5f} | ACC: {acc[-1]:.5f}'
 	if n_classes > 2:
@@ -311,10 +328,12 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 	log_file_path = f'{LOG_DIR}/epochs_{model.model_id:03}.tsv'
 	logger        = Logger(log_file_path,n_classes)
 
-	# best_iou   = 0.0
 	best_epoch = 0
-	best_iou_ema = 0.0
+	best_iou   = 0.0
+	best_epoch_ema = 0
+	best_iou_ema   = 0.0
 	ema_iou = EMA()
+	recent_best = RecentBestTracker(n=3)
 
 	for epoch in range(epochs):
 
@@ -437,13 +456,18 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 		print(f"EMA IoU: {smoothed_iou:.5f}")
 
 		if epoch >= 5 and best_iou_ema < smoothed_iou:
-			# best_iou   = epoch_iou
-			best_iou_ema = smoothed_iou
+			best_iou_ema   = smoothed_iou
+			best_epoch_ema = epoch
+			chkpt_path = save_checkpoint(MODEL_DIR,model,optimizer,epoch,loss_tr,loss_va,best=True)
+			recent_best.update(chkpt_path)
+
+		# NON-SMOOTHED
+		if best_iou < epoch_iou:
+			best_iou   = epoch_iou
 			best_epoch = epoch
-			save_checkpoint(MODEL_DIR,model,optimizer,epoch,loss_tr,loss_va,best=True)
 
-	print(f'Best (EMA) validation IoU: {best_iou_ema:.5f} -- Epoch {best_epoch}')
-
+	print(f'Best validation IoU: {best_iou:.5f} -- Epoch {best_epoch}')
+	print(f'Best (EMA) validation IoU: {best_iou_ema:.5f} -- Epoch {best_epoch_ema}')
 
 
 if __name__ == "__main__":

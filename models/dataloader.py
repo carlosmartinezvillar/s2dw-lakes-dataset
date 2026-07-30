@@ -27,7 +27,6 @@ class TrainTransform:
 		])
 
 		self.intensity = v2.Compose([
-			# v2.ColorJitter(brightness=0.1,contrast=0.1), #needs scaling/unscaling to [0,1]
 			v2.GaussianNoise(mean=0,sigma=0.02*255,clip=False)
 		])
 
