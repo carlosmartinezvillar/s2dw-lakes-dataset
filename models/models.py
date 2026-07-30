@@ -722,3 +722,15 @@ if __name__ == '__main__':
 			# get_model_memory_size(model)
 			get_model_parameter_size(model,i==0)
 			# count_flops(model)
+
+	if cuda.is_available():
+		for j,kwargs in enumerate([tiny,small,base,large]):
+
+			print("\n",sizes[j])
+
+			for i,v in enumerate(variations):
+
+				model = v(model_id=999,**kwargs)
+				get_model_memory_size(model)
+				# get_model_parameter_size(model,i==0)
+				count_flops(model)		
