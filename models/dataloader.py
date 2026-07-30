@@ -55,7 +55,7 @@ class TrainTransform:
 
 		self.intensity = v2.Compose([
 			v2.ColorJitter(brightness=0.1,contrast=0.1),
-			v2.GaussianNoise(mean=0,sigma=0.02*255,clip=False)
+			# v2.GaussianNoise(mean=0,sigma=0.02*255,clip=False)
 		])
 
 
@@ -95,19 +95,6 @@ class SentinelDataset(torch.utils.data.Dataset):
 			self.lbl_div = 255
 		if n_labels == 3:
 			self.lbl_div = 127
-
-		# REQUIRED TRANSFORMS FOR ALL INPUTS
-		# self.input_transform = v2.Compose([
-			# v2.PILToTensor,
-			# v2.ToDtype(torch.float32,scale=False)
-		# ])
-
-		# REQUIRED TRANSFORMS FOR ALL LABELS
-		# self.label_transform = v2.Compose([
-			# v2.PILToTensor,
-			# LabelDivTransform(lbl_div=self.lbl_div), #ddp pickling not working w/ lambdas
-			# v2.ToDtype(torch.int64)
-		# ])
 
 		# TRANSFORMS ONLY FOR TRAIN SET -- AUGMENTATION
 		self.train_transform = transform
