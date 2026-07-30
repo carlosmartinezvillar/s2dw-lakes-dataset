@@ -61,7 +61,7 @@ class TrainTransform:
 
 	def __call__(self,image,label):
 		image, label = self.geometric(image,label)
-		# image        = self.intensity(image)
+		image        = self.intensity(image)
 		return image, label
 
 
