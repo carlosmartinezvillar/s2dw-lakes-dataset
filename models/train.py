@@ -506,7 +506,7 @@ if __name__ == "__main__":
 			shuffle=True,
 			num_workers=4,
 			pin_memory=True,
-			prefetch_factor=10),
+			prefetch_factor=8),
 		'validation': torch.utils.data.DataLoader(
 			va_dataset,
 			batch_size=HP['batch'],
@@ -514,7 +514,7 @@ if __name__ == "__main__":
 			shuffle=False,
 			num_workers=4,
 			pin_memory=True,
-			prefetch_factor=10)
+			prefetch_factor=8)
 	}
 
 	#---------- LEARNING RATE SCHEDULER ------------------------------------------------------------

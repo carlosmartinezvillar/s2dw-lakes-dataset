@@ -54,14 +54,14 @@ class TrainTransform:
 		])
 
 		self.intensity = v2.Compose([
-			v2.ColorJitter(brightness=0.2,contrast=0.2),
-			v2.GaussianNoise(sigma=0.02*255)
+			v2.ColorJitter(brightness=0.1,contrast=0.1),
+			v2.GaussianNoise(mean=0,sigma=0.02*255,clip=False)
 		])
 
 
 	def __call__(self,image,label):
 		image, label = self.geometric(image,label)
-		image        = self.intensity(image)
+		# image        = self.intensity(image)
 		return image, label
 
 
@@ -75,8 +75,8 @@ class SentinelDataset(torch.utils.data.Dataset):
 		self.ids        = [i[0:-8] for i in self.band_files]
 
 		# NORMALIZING CONSTANTS
-		self.mean = torch.tensor([123.30515418,132.73142713,131.5999535,115.50730149]).view(-1,1,1)
-		self.std  = torch.tensor([53.223368,51.52951993,53.70758823,55.61025949]).view(-1,1,1)
+		self.mean = torch.tensor([123.305154,132.731427,131.599954,115.507302]).view(-1,1,1)
+		self.std  = torch.tensor([53.223368,51.529520,53.707588,55.610260]).view(-1,1,1)
 
 		# ADJUST ARRAY GEOMETRIES ACCORDING TO NR OF BANDS
 		if (n_bands!=3) and (n_bands!=4):
