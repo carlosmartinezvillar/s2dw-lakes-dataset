@@ -69,7 +69,6 @@ def plot_tile_polygons(us_geom):
 	# TILES IN DATASET
 	tile_geometries_file = "./search/search_results_geometries.tsv"
 
-
 	dropped_tiles = ["T11SKD","T11TKE"]
 
 	#LOAD AS GEODATAFRAME
@@ -726,18 +725,20 @@ def parse_args():
 ################################################################################
 if __name__ == '__main__':
 
-	# dw_tile_path = "/Users/ci/Desktop/20250627T184941_20250627T185915_T10SEJ.tif"
+	args = parse_args()
+
+	sample_dw_tile = "20250627T184941_20250627T185915_T10SEJ.tif"
+	# dw_tile_path = f"/Users/ci/Desktop/{sample_dw_tile}"
 	# plot_tile_label(dw_tile_path)
 	# plot_tile_label_original(dw_tile_path)
 
-	args = parse_args()
-
+	sample_chip = "20250108T185751_20250108T185745_T10SEH_R113_25_17_B0X.tif"
 	if args.chip_dir is not None:
-		chip_path = f"{args.chip_dir}/20250108T185751_20250108T185745_T10SEH_R113_25_17_B0X.tif"
+		chip_path = f"{args.chip_dir}/{sample_chip}"
 		plot_chip(chip_path)
 		plot_chip_band_histogram(chip_path)
 
-	plot_tile_polygons()
+	plot_tile_polygons() #<<< --- missing
 	plot_data_split_polygons() # <<-- 
 
 	pass
