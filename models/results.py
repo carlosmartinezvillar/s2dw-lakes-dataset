@@ -84,7 +84,7 @@ def get_model_best_epoch(log_path):
 	return best  
 
 
-def plot_training_log(log_path,best_epoch=None):
+def plot_training_log(log_path,best_iou_epoch=None,best_ema_epoch=None):
 	'''
 	Plot full time series of epochs log for training and validation results.
 	Two plots: loss and metrics.
@@ -141,8 +141,8 @@ def plot_training_log(log_path,best_epoch=None):
 	ax.plot(tloss,label='Training',linestyle='--',**params)
 	ax.plot(vloss,label='Validation',linestyle='-',**params)
 
-	if best_epoch is not None:
-		ax.axvline(x=best_epoch, color='black', linestyle='--')
+	if best_iou_epoch is not None:
+		ax.axvline(x=best_iou_epoch, color='black', linestyle='--')
 
 	# SAVE
 	plt.legend()
@@ -171,8 +171,8 @@ def plot_training_log(log_path,best_epoch=None):
 	# ax.plot(vtpr1,label='Valid tpr',linestyle='-',**params)
 	# ax.plot(vppv1,label='Valid ppv',linestyle='-',**params)
 
-	if best_epoch is not None:
-		ax.axvline(x=best_epoch, color='black', linestyle='--')
+	if best_iou_epoch is not None:
+		ax.axvline(x=best_iou_epoch, color='black', linestyle='--')
 
 	# SAVE
 	plt.legend()
