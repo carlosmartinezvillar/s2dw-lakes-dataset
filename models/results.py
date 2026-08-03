@@ -1,14 +1,13 @@
 '''
 Retrieve training results from training logs.
-
-Assumes log files are stored as:
+This script assumes log files are stored as:
 
 /LOG_DIR/stage_1/epochs_000.tsv
 /LOG_DIR/stage_1/epochs_001.tsv
 ...
-/LOG_DIR/stage_2/epochs_000.tsv etc. 
+/LOG_DIR/stage_2/epochs_000.tsv
+...etc. 
 '''
-
 import os
 import glob
 import matplotlib.pyplot as plt
@@ -86,7 +85,7 @@ def get_model_best_epoch(log_path):
 
 def plot_training_log(log_path,best_iou_epoch=None,best_ema_epoch=None):
 	'''
-	Plot full time series of epochs log for training and validation results.
+	Plot full time series of per epoch training and validation results.
 	Two plots: loss and metrics.
 	'''
 
@@ -187,35 +186,45 @@ def sort_ids_by_model(models,hp_list):
 	return model_id_dict
 
 
-def plot_lrate_vs_decay(hp_list,ids,model_str):
+def plot_lrate_vs_decay(model_str,lrates,decays,scores):
 	'''
+	For 'stage_1'.
 	Plot a scatter plot for the decay and lrate hyperparameter search
 	of a model.
 	'''
 
-	indexed = {row['id']:row for row in hp_list}
-
-	decays = []
-	lrates = []
-	for i in ids:
-		decays.append(indexed[i]['decay'])
-		lrates.append(indexed[i]['lrate'])
-	decays = np.array(decays)
 	lrates = np.array(lrates)
+	decays = np.array(decays)
+	scores = np.array(scores)
+
+	# Indices of the top 5 scores
+	top5_idx = np.argsort(scores)[-5:]
+	mask = np.zeros(len(scores), dtype=bool)
+	mask[top5_idx] = True
 
 	fig = plt.figure(figsize=(30,15))
 	ax  = fig.add_subplot(111)
-	# params = {'linewidth':0.8}
-	# ax.plot(vppv1,label='Valid ppv',linestyle=':',**params)
+
+	# Plot the rest as dots
 	ax.scatter(
-	lrates, decay, 
-	# s=sizes, 
-	# c=colors, 
-	cmap='plasma', 
-	# alpha=0.8,
-	edgecolors='white',
-	linewidths=0.5
+		lrates[~mask], decay[~mask],
+		marker='o',
+		cmap='plasma',
+		edgecolors='white',
+		linewidths=0.5,
+		label='Other'
 	)
+
+	# Plot the top 5 as 'x'
+	ax.scatter(
+		lrates[mask], decay[mask],
+		marker='x',
+		color='red',
+		linewidths=1.5,
+		s=100,
+		label='Top 5'
+	)
+
 	ax.set_ylabel('Decay')
 	ax.set_xlabel('LRate')
 	ax.set_title(f"Decay vs. Learning Rate -- {model_str}")
@@ -241,22 +250,27 @@ def get_best_stage_1(log_dir):
 	Get best lrate, batch, decay for each model variation.
 	'''
 
+	# --------------------------------------------------
+	# LOAD & SET STRINGS
+	# --------------------------------------------------
 	with open('./hparams/stage_1.json','r') as fp:
 		hp_list = [json.loads(line) for line in fp.readlines() if line != "\n"]
-
 	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
 
-	# ROW/EXPERIMENT GROUPED BY MODEL
+	# --------------------------------------------------
+	# GROUP ROW/EXPERIMENTS BY MODEL
+	# --------------------------------------------------
 	# {'UNet_CNN_CNN':[0,1,2,...],'UNet_ViT_CNN':[40,41,42,..], ...etc.}
 	ids_by_model = sort_ids_by_model(models,hp_list)
 
-
+	# --------------------------------------------------
 	# GET BEST EPOCH RESULTS FOR EACH EXPERIMENT
+	# --------------------------------------------------
 	'''
 	{'UNet_CNN_CNN':
 	[
 		{
-			'id': 000,
+			'id': '000',
 			'iou':(best_iou,best_iou_epoch),
 			'acc':(best_acc,best_acc_epoch),
 			'tpr':(best_tpr,best_tpr_epoch),
@@ -273,12 +287,13 @@ def get_best_stage_1(log_dir):
 			log_file = f"{log_dir}/stage_1/epochs_{experiment:03}.tsv" # <--- fails if no log
 			model_results[model].append(get_model_best_epoch(log_file))
 
-
-	# FIND BEST 5 BY IOU (EMA IoU?)
+	# --------------------------------------------------
+	# FILTER BEST 5 BY IOU (or EMA IoU?)
+	# --------------------------------------------------
 	'''
 	best_by_model = {
 		'UNet_CNN_CNN': [(model_id,(iou,epoch))]	
-		...
+		...etc.
 	}
 	'''
 	best_by_model = {key:[] for key in models}
@@ -286,53 +301,116 @@ def get_best_stage_1(log_dir):
 		scores = model_results[model]
 		ious = [_['iou'] for _ in scores]
 		emas = [_['ema'] for _ in scores]
-		top5 = sorted(enumerate(ious),key=lambda x: x[1],reverse=True)[:5] #[(i,(score,epoch))]
+		top5 = sorted(enumerate(emas),key=lambda x: x[1],reverse=True)[:5] #[(i,(score,epoch))]
 		top5_idx = [_[0] for _ in top5]
-		top5_iou = [_[1][0] for _ in top5]
+		top5_ema = [_[1][0] for _ in top5]
 		top5_epo = [_[1][1] for _ in top5]
 
 		for idx in top5_idx:
 			best_by_model[model].append(scores[idx])
 
-	# STDOUT BEST RUNS PER ARCHITECTURE
+	# --------------------------------------------------
+	# STDOUT/TXT BEST RUNS PER ARCHITECTURE
+	# --------------------------------------------------
+	best_hp_ids = []
+	fp =  open('./hparams/best_stage_1.txt','w')
 	for model in best_by_model:
 		print(f"\n{model} -- TOP 5 SCORES")
 		print('-'*20)
 		for score_dict in best_by_model[model]:
-			print(f"id: {score_dict['id']} | iou: {score_dict['iou']} | ema: {score_dict['ema']}")
+			line = f"id: {score_dict['id']} | iou: {score_dict['iou']} | ema: {score_dict['ema']}"
+			print(line)
+			fp.write(line + '\n')
+			best_hp_ids.append(int(scored_dict['id']))
+	fp.close()
 
+	# --------------------------------------------------
+	# SAVE A NEW FILE WITH HPARAMS SET FOR THESE BEST 5
+	# --------------------------------------------------
+	indexed_hp_list = {row['id']:row for row in hp_list}
+	rows = [indexed_hp_list[i] for i in best_hp_ids]
+	out_file_path = f"./hparams/best_stage_1.json"
+	with open(out_file_path,'w') as fp:
+		for row in rows:
+			json.dump(row,fp)
+			fp.write('\n')
+	print(f"Parameter file written to {out_file_path}")
 
+	# --------------------------------------------------
 	# PLOT TRAINING LOG BEST 5
+	# --------------------------------------------------
 	for model in best_by_model:
 		for score_dict in best_by_model[model]:
-			exp = score_dict['id']
-			log_file = f"{log_dir}/stage_1/epochs_{exp:03}.tsv"
+			experiment = score_dict['id']
+			log_file   = f"{log_dir}/stage_1/epochs_{experiment:03}.tsv"
 			plot_training_log(log_file)
 
-
-
-	# MATCH LRATE & DECAY TO SCORE
-	hp_indexed = {row['id']:row for row in hp_list}
-	score_and_config = {k:[] for k in model_results.keys()}
+	# --------------------------------------------------
+	# MATCH LRATE, BATCH, & DECAY TO SCORE
+	# --------------------------------------------------
+	# score_and_config = {k:[] for k in model_results.keys()}
 	for model in model_results:
+		model_lrates = []
+		model_decays = []
+		model_emas   = []
 		scores = model_results[model]
 		for score_dict in scores:
 			score_id    = int(score_dict['id'])
-			score_lrate = hp_indexed[score_id]['lrate']
-			score_decay = hp_indexed[score_id]['decay']
+			score_lrate = indexed_hp_list[score_id]['lrate']
+			score_decay = indexed_hp_list[score_id]['decay']
+			score_batch = indexed_hp_list[score_id]['batch']
 			# score_iou   = score_dict['iou'][0]
 			score_ema   = score_dict['ema'][0]
-			score_and_config[model].append((score_id,score_lrate,score_decay,score_ema))
+			# score_and_config[model].append((score_id,score_lrate,score_decay,score_batch,score_iou,score_ema))
+			model_lrates.append(score_lrate)
+			model_decays.append(score_decay)
+			model_emas.append(score_ema)
 
-		# PLOT THE PREVIOUS WITH SCORE HIGHLIGHTED
-		plot_lrate_vs_decay(,model)
+		# --------------------------------------------------
+		# PLOT -- EACH MODEL DIST. OF LRATE DECAY
+		# --------------------------------------------------
+		plot_lrate_vs_decay(model,model_lrates,model_decays,model_emas)
 
 
-def get_best_stage_2():
+def get_best_stage_2(log_dir):
 	'''
 	Run through all 16 combinations in Stage 2.
 	'''
-	pass
+	# --------------------------------------------------
+	# LOAD & SET STRINGS
+	# --------------------------------------------------
+	with open('./hparams/stage_2.json','r') as fp:
+		hp_list = [json.loads(line) for line in fp.readlines() if line != "\n"]
+	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
+
+	# --------------------------------------------------
+	# VALIDATION RESULTS
+	# --------------------------------------------------
+	all_results = []
+	for row in hp_list:
+		experiment = row['id']
+		log_file   = f"{log_dir}/stage_2/epochs_{experiment:03}.tsv" # <--- fails if no log
+		best_epoch = get_model_best_epoch(log_file)
+		all_results.append(best_epoch)
+
+	for score_dict in all_results:
+		line = f"id: {score_dict['id']} | iou: {score_dict['iou']} | ema: {score_dict['ema']}"
+		print(line)
+
+	# --------------------------------------------------
+	# TEST RESULTS
+	# --------------------------------------------------
+	for i,row in enumerate(hp_list):
+		experiment = row['id']
+		log_file = f"{log_dir}/stage_2/test_{experiment:03}.tsv"
+		with open(log_file,'r') as fp:
+			lines = fp.readlines()
+		header = lines[0]
+		result = lines[1].rstrip('\n')
+		if i == 0:
+			print(f"{'-'*20} | {header}")
+		line = f"{row['model']} | ID: {experiment} | {result}"
+		print(line)
 
 
 def get_best_stage_3():

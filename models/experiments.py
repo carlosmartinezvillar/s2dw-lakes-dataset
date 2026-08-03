@@ -65,6 +65,11 @@ def set_hyperparameters(name):
 
 
 	# STAGE 2 -- ARCHITECTURE VARIATIONS: CHANNELS x DEPTH SIZE
+	# variations = [UNet_CNN_CNN,UNet_ViT_CNN,UNet_CNN_ViT,UNet_ViT_ViT]
+	# tiny  = {'cnn_layers':2,'vit_layers':1,'channels':16,'mlp_ratio':5}
+	# small = {'cnn_layers':3,'vit_layers':2,'channels':16,'mlp_ratio':5}
+	# base  = {'cnn_layers':2,'vit_layers':1,'channels':32,'mlp_ratio':5}
+	# large = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':5}	
 	if name == 'stage_2':
 		seed   = 476
 		epochs = 50
@@ -200,7 +205,7 @@ def set_hyperparameters(name):
 
 if __name__ == '__main__':
 	set_seed(476) #Set seed to fix list of hyperparameters
-	set_hyperparameters('stage_1')
-	# set_hyperparameters('stage_2')
+	# set_hyperparameters('stage_1')
+	set_hyperparameters('stage_2')
 	# set_hyperparameters('stage_3')
 	# set_hyperparameters('stage_4')
