@@ -11,6 +11,7 @@ This script assumes log files are stored as:
 import os
 import glob
 import matplotlib.pyplot as plt
+from matplotlib.ticker import StrMethodFormatter
 import numpy as np
 import argparse
 import json
@@ -31,6 +32,9 @@ def load_log(log_path):
 	# OPEN/READ
 	with open(log_path,'r') as fp:
 		lines = fp.readlines()
+
+	assert len(lines) > 1, f"Found {len(lines)} in {log_path}"
+
 	header = lines[0].rstrip('\n').split('\t')
 	epochs = np.array([l.rstrip('\n').split('\t') for l in lines[1:]]).astype(float)
 
@@ -146,8 +150,10 @@ def plot_training_log(log_path,best_iou_epoch=None,best_ema_epoch=None):
 
 	# SAVE
 	plt.legend()
-	plt.savefig(f'../figures/loss_stage{stage_nr}_{model_id}.png')
+	out_path_1 = f'../figures/loss_{stage_nr}_{model_id}.png'
+	plt.savefig(out_path_1)
 	plt.close()
+	print(f"Plot written to {out_path_1}")
 
 	####################
 	# II. PLOT - METRICS
@@ -176,8 +182,10 @@ def plot_training_log(log_path,best_iou_epoch=None,best_ema_epoch=None):
 
 	# SAVE
 	plt.legend()
-	plt.savefig(f'../figures/metrics_stage{stage_nr}_{model_id}.png')
+	out_path_2 = f'../figures/metrics_{stage_nr}_{model_id}.png'
+	plt.savefig(out_path_2)
 	plt.close()
+	print(f"Plot written to {out_path_2}")
 
 
 def sort_ids_by_model(models,hp_list):
@@ -198,27 +206,32 @@ def plot_lrate_vs_decay(model_str,lrates,decays,scores):
 	decays = np.array(decays)
 	scores = np.array(scores)
 
+
 	# Indices of the top 5 scores
 	top5_idx = np.argsort(scores)[-5:]
 	mask = np.zeros(len(scores), dtype=bool)
 	mask[top5_idx] = True
+
+	# exp_ids = np.array(exp_ids) # debugging
+	# print(scores[top5_idx])
+	# print(exp_ids[top5_idx])
+
+	out_path = f'../figures/decaylrate_{model_str}.png'
 
 	fig = plt.figure(figsize=(30,15))
 	ax  = fig.add_subplot(111)
 
 	# Plot the rest as dots
 	ax.scatter(
-		lrates[~mask], decay[~mask],
+		lrates[~mask], decays[~mask],
 		marker='o',
-		cmap='plasma',
 		edgecolors='white',
-		linewidths=0.5,
-		label='Other'
+		linewidths=0.5
 	)
 
 	# Plot the top 5 as 'x'
 	ax.scatter(
-		lrates[mask], decay[mask],
+		lrates[mask], decays[mask],
 		marker='x',
 		color='red',
 		linewidths=1.5,
@@ -226,24 +239,48 @@ def plot_lrate_vs_decay(model_str,lrates,decays,scores):
 		label='Top 5'
 	)
 
+	# adjust plot
+	ax.xaxis.set_major_formatter(StrMethodFormatter('{x:.5f}'))
+	ax.yaxis.set_major_formatter(StrMethodFormatter('{x:.5f}'))
 	ax.set_ylabel('Decay')
-	ax.set_xlabel('LRate')
-	ax.set_title(f"Decay vs. Learning Rate -- {model_str}")
-	plt.savefig(f'../figures/decaylrate_{model_str}.png')
+	ax.set_xlabel('Learning Rate')
+	ax.set_title(f"Decay vs. Learning Rate -- {model_str}; N={len(scores)}")
+	plt.savefig(out_path)
 	plt.close()
 
+	print(f"Plot written to {out_path}")
 
-def plot_batch_vs_iou():
+
+def plot_batch_vs_iou(model_str,model_scores,model_batches,ema=False):
 	'''
-	Needed only(?) for stage 1.
-	Histogram or boxplot for distribution of IoU for each batch size.
+	For 'stage 1'.
+	Boxplot for distribution of IoU for each batch size.
 	'''
-	pass
-	# ax.set_ylabel('Validation IoU')
-	# ax.set_xlabel('Batch Size')
-	# ax.set_title(f"Batch vs. Validation IoU -- {model_str}")
-	# plt.savefig(f'../figures/batch_{model_str}.png')
-	# plt.close()	
+	# EASIER TYPE
+	model_scores = np.array(model_scores)
+	model_batches = np.array(model_batches)
+
+	# GROUP BY BATCH SIZE
+	unique_batches = np.unique(model_batches) #8,16
+	grouped_scores = [model_scores[model_batches==b] for b in unique_batches]
+	group_labels   = [f"{b}" for b in unique_batches]
+
+	# PLOT
+	out_path = f'../figures/batchiou_{model_str}.png'
+	fig = plt.figure(figsize=(30,15))
+	ax  = fig.add_subplot(111)
+	ax.boxplot(grouped_scores,labels=group_labels)
+
+	# ADJUST PLOT
+	if ema:
+		ax.set_ylabel('Validation IoU -- EMA')
+	else:
+		ax.set_ylabel('Validation IoU')
+	ax.set_xlabel('Batch Size')
+	ax.set_title(f"Validation IoU by Batch Size-- {model_str}")
+	plt.savefig(out_path)
+	plt.close()	
+	print(f"Plot written to {out_path}")
 
 
 def check_log_dir(log_dir,folder_range=160):
@@ -293,7 +330,10 @@ def get_best_stage_1(log_dir):
 	for model in model_results:
 		for experiment in ids_by_model[model]:
 			log_file = f"{log_dir}/stage_1/epochs_{experiment:03}.tsv" # <--- fails if no log
-			model_results[model].append(get_model_best_epoch(log_file))
+			try:
+				model_results[model].append(get_model_best_epoch(log_file))
+			except AssertionError as e:
+				print(f"Error loading file: {e}")
 
 	# --------------------------------------------------
 	# FILTER BEST 5 BY IOU (or EMA IoU?)
@@ -320,29 +360,35 @@ def get_best_stage_1(log_dir):
 	# --------------------------------------------------
 	# STDOUT/TXT BEST RUNS PER ARCHITECTURE
 	# --------------------------------------------------
+	indexed_hp_list = {row['id']:row for row in hp_list}
 	best_hp_ids = []
 	fp =  open('./hparams/best_stage_1.txt','w')
 	for model in best_by_model:
 		print(f"\n{model} -- TOP 5 SCORES")
 		print('-'*20)
 		for score_dict in best_by_model[model]:
+			hp_dict = indexed_hp_list[int(score_dict['id'])]
 			line = f"id: {score_dict['id']} | iou: {score_dict['iou']} | ema: {score_dict['ema']}"
+			line += f" | batch: {hp_dict['batch']} | lrate: {hp_dict['lrate']} | decay: {hp_dict['decay']}"
 			print(line)
 			fp.write(line + '\n')
-			best_hp_ids.append(int(scored_dict['id']))
+			best_hp_ids.append(int(score_dict['id']))
 	fp.close()
+
+	return
 
 	# --------------------------------------------------
 	# SAVE A NEW FILE WITH HPARAMS SET FOR THESE BEST 5
 	# --------------------------------------------------
-	indexed_hp_list = {row['id']:row for row in hp_list}
+	# indexed_hp_list = {row['id']:row for row in hp_list}
 	rows = [indexed_hp_list[i] for i in best_hp_ids]
 	out_file_path = f"./hparams/best_stage_1.json"
 	with open(out_file_path,'w') as fp:
 		for row in rows:
 			json.dump(row,fp)
 			fp.write('\n')
-	print(f"Parameter file written to {out_file_path}")
+	print(f"\nParameter file written to {out_file_path}")
+
 
 	# --------------------------------------------------
 	# PLOT TRAINING LOG BEST 5
@@ -358,26 +404,37 @@ def get_best_stage_1(log_dir):
 	# --------------------------------------------------
 	# score_and_config = {k:[] for k in model_results.keys()}
 	for model in model_results:
+		model_ids    = [] #debugging
 		model_lrates = []
 		model_decays = []
 		model_emas   = []
+		model_batches = []
+		model_ious   = []
 		scores = model_results[model]
 		for score_dict in scores:
 			score_id    = int(score_dict['id'])
 			score_lrate = indexed_hp_list[score_id]['lrate']
 			score_decay = indexed_hp_list[score_id]['decay']
 			score_batch = indexed_hp_list[score_id]['batch']
-			# score_iou   = score_dict['iou'][0]
+			score_iou   = score_dict['iou'][0]
 			score_ema   = score_dict['ema'][0]
 			# score_and_config[model].append((score_id,score_lrate,score_decay,score_batch,score_iou,score_ema))
 			model_lrates.append(score_lrate)
 			model_decays.append(score_decay)
 			model_emas.append(score_ema)
+			model_ious.append(score_iou)
+			model_batches.append(score_batch)
+			model_ids.append(score_id)
 
 		# --------------------------------------------------
 		# PLOT -- EACH MODEL DIST. OF LRATE DECAY
 		# --------------------------------------------------
 		plot_lrate_vs_decay(model,model_lrates,model_decays,model_emas)
+
+		# --------------------------------------------------
+		# PLOT -- EACH MODEL BOXPLOT, BATCH vs IoU
+		# --------------------------------------------------
+		plot_batch_vs_iou(model,model_emas,model_batches)
 
 
 def get_best_stage_2(log_dir):

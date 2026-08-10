@@ -79,6 +79,8 @@ def set_hyperparameters(name):
 		labels     = 2
 
 		lrate = [] #best from stage 1
+		# "lrate": 0.0002 CNN-CNN
+
 		decay = [] #best from stage 1
 		batch = [] #best from stage 1
 
