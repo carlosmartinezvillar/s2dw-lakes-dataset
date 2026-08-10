@@ -13,6 +13,7 @@ import glob
 import matplotlib.pyplot as plt
 import numpy as np
 import argparse
+import json
 
 def calculate_ema(metric,alpha=0.3):
 	'''
@@ -245,6 +246,13 @@ def plot_batch_vs_iou():
 	# plt.close()	
 
 
+def check_log_dir(log_dir,folder_range=160):
+	expected_files = {f"epochs_{i:03}.tsv" for i in range(folder_range)}
+	present_files = set(glob.glob("epochs_*.tsv",root_dir=log_dir))
+	missing_files = sorted(expected_files - present_files)
+	print(missing_files)
+
+
 def get_best_stage_1(log_dir):
 	'''
 	Get best lrate, batch, decay for each model variation.
@@ -445,12 +453,13 @@ if __name__ == '__main__':
 	args = parse_args()
 	log_dir = args.log_dir.rstrip('/')
 
-	experiment = 0
-	log_file = f"{log_dir}/stage_1/epochs_{experiment:03}.tsv"
+	# experiment = 0
+	# log_file = f"{log_dir}/stage_1/epochs_{experiment:03}.tsv"
 
-	best = get_model_best_epoch(log_file)
-	print(best)
-	best_ema_epoch = best['ema'][1]
-	plot_training_log(log_file,best_epoch=best_ema_epoch)
+	# best = get_model_best_epoch(log_file)
+	# print(best)
+	# best_ema_epoch = best['ema'][1]
+	# plot_training_log(log_file,best_epoch=best_ema_epoch)
 
-
+	# check_log_dir(log_dir)
+	get_best_stage_1(log_dir)

@@ -20,7 +20,7 @@ DATA_DIR  = None
 LOG_DIR   = None
 MODEL_DIR = None
 CUDA_DEV  = None
-
+N_WORKERS = None
 
 ####################################################################################################
 # CLASSES
@@ -131,6 +131,8 @@ def parse_args():
 		help='GPU id to train in, if different than 0. Useful to select a gpu in a multi-gpu machine.')
 	optional.add_argument('--full',required=False,action='store_true',default=False,
 		help='Train on both training and validation sets (training final model).')
+	optional.add_argument('--workers',required=False,type=int,default=2,
+		help='Sets num_workers for training and validation dataloaders.')
 
 	# LOAD 
 	args = parser.parse_args()
@@ -149,10 +151,12 @@ def parse_args():
 	global LOG_DIR
 	global MODEL_DIR
 	global CUDA_DEV
+	global N_WORKERS
 	DATA_DIR  = args.data_dir
 	LOG_DIR   = args.log_dir
 	MODEL_DIR = args.net_dir
-	CUDA_DEV  = torch.device(f"cuda:{args.gpu}")	
+	CUDA_DEV  = torch.device(f"cuda:{args.gpu}")
+	N_WORKERS = args.workers
 	return args
 
 
@@ -538,7 +542,7 @@ if __name__ == "__main__":
 			batch_size=HP['batch'],
 			drop_last=False,
 			shuffle=True,
-			num_workers=2,
+			num_workers=N_WORKERS,
 			pin_memory=True,
 			prefetch_factor=8),
 		'validation': torch.utils.data.DataLoader(
@@ -546,7 +550,7 @@ if __name__ == "__main__":
 			batch_size=HP['batch'],
 			drop_last=False,
 			shuffle=False,
-			num_workers=2,
+			num_workers=N_WORKERS,
 			pin_memory=True,
 			prefetch_factor=8)
 	}
