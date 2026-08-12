@@ -16,6 +16,10 @@ import numpy as np
 import argparse
 import json
 
+
+FIG_SIZE = (10,5)
+
+
 def calculate_ema(metric,alpha=0.3):
 	'''
 	Return EMA for np.array 'metric'.
@@ -136,7 +140,7 @@ def plot_training_log(log_path,best_iou_epoch=None,best_ema_epoch=None):
 	# I. PLOT -- LOSS
 	####################
 	# SET
-	fig = plt.figure(figsize=(30,15))
+	fig = plt.figure(figsize=FIG_SIZE)
 	ax  = fig.add_subplot(111)
 	params = {'linewidth':1.0}
 	ax.set_ylabel('Loss')
@@ -161,7 +165,7 @@ def plot_training_log(log_path,best_iou_epoch=None,best_ema_epoch=None):
 	# II. PLOT - METRICS
 	####################
 	# CONFIG
-	fig = plt.figure(figsize=(30,15))
+	fig = plt.figure(figsize=FIG_SIZE)
 	ax  = fig.add_subplot(111)
 	params = {'linewidth':1.0}
 	# ax.set_ylim((0.0,1.0))
@@ -220,7 +224,7 @@ def plot_lrate_vs_decay(model_str,lrates,decays,scores):
 
 	out_path = f'../figures/stage_1/decaylrate_{model_str}.png'
 
-	fig = plt.figure(figsize=(30,15))
+	fig = plt.figure(figsize=FIG_SIZE)
 	ax  = fig.add_subplot(111)
 
 	norm = plt.Normalize(vmin=scores.min(), vmax=scores.max())
@@ -289,7 +293,7 @@ def plot_batch_vs_iou(model_str,model_scores,model_batches,ema=False):
 
 	# PLOT
 	out_path = f'../figures/stage_1/batchiou_{model_str}.png'
-	fig = plt.figure(figsize=(30,15))
+	fig = plt.figure(figsize=FIG_SIZE)
 	ax  = fig.add_subplot(111)
 	ax.boxplot(grouped_scores,labels=group_labels)
 
