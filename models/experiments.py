@@ -8,6 +8,7 @@ import argparse
 import os
 import numpy as np
 import random
+import copy
 
 
 def set_seed(seed: int):
@@ -64,13 +65,84 @@ def set_hyperparameters(name):
 				rows.append(sample)
 
 
-	# STAGE 2 -- ARCHITECTURE VARIATIONS: CHANNELS x DEPTH SIZE
+	# STAGE 2 -- BEST LEARNING RATE, WEIGHT DECAY ACROSS SEEDS
+	if name == 'stage_2':
+		models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
+		rows   = []				 
+
+		with open('./hparams/stage_1.json','r') as fp:
+			stage_1 = [json.loads(line) for line in fp.readlines() if line != "\n"]
+		indexed_stage_1 = {row['id']:row for row in stage_1}
+
+		seeds = [176,276,376,476,576]
+		best  = [15,13,19,76,70,67,101,90,84,153,141,138] #best 3 per model from stage_1
+		cross_product = list(itertools.product(seeds,best))
+
+		for i,(s,idx) in enumerate(cross_product):
+			sample = copy.deepcopy(indexed_stage_1[idx])
+			sample["seed"]   = s
+			sample["epochs"] = 65
+			sample["old_id"] = sample["id"]
+			sample["id"]     = i
+			# print(s,idx)
+			# print(sample)
+			rows.append(sample)
+
+		# HARD CODE IT? 
+		# cnn_cnn_best = [{'lrate':0.0002,'decay':0.00112,'batch':16},{'lrate':0.00034,'decay':0.00144,'batch':16}]
+		# vit_cnn_best = {'lrate':0.0002,'decay':,'batch':16}
+		# cnn_vit_best = {'lrate':,'decay':,'batch':16}
+		# vit_vit_best = {'lrate':,'decay':,'batch':16}		
+
+
+
+	# STAGE 3 -- CHECK SCHEDULER
+	if name == 'stage_3':
+		models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
+		all_eta_min = [0.0,1e-6,1e-5]
+		all_cycles  = [1,2,3]
+
+		# Cross-product
+		cross_product = list(itertools.product(models,all_eta_min,all_cycles))
+
+
+		rows = []
+		for i,combination in enumerate(cross_product):
+
+			model   = combination[0]
+			eta_min = combination[1]
+			cycles  = combination[2]
+
+			sample = {
+				'id':i,
+				'model':model,
+				'seed':476,
+				'epochs':65,
+				'scheduler':"cos",
+				'eta_min':eta_min,
+				'cycles': cycles,
+				'loss':"ce",
+				'bands':3,
+				'labels':2,
+				'optim':"adamw",
+				'lrate':0, #missing -- stage 1
+				'decay':0, #missing
+				'batch':8, #missing
+				'vit_layers':1, #missing -- stage 2
+				'mlp_ratios':4, #missing
+				'cnn_layers':2,  #missing
+				'channels':32 #missing  
+			}
+			rows.append(sample)
+
+
+	# STAGE 4 -- ARCHITECTURE VARIATIONS: CHANNELS x DEPTH SIZE
 	# variations = [UNet_CNN_CNN,UNet_ViT_CNN,UNet_CNN_ViT,UNet_ViT_ViT]
 	# tiny  = {'cnn_layers':2,'vit_layers':1,'channels':16,'mlp_ratio':5}
 	# small = {'cnn_layers':3,'vit_layers':2,'channels':16,'mlp_ratio':5}
 	# base  = {'cnn_layers':2,'vit_layers':1,'channels':32,'mlp_ratio':5}
 	# large = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':5}	
-	if name == 'stage_2':
+	if name == 'stage_4':
 		seed   = 476
 		epochs = 50
 		scheduler  = "cos"
@@ -125,48 +197,8 @@ def set_hyperparameters(name):
 			rows.append(sample)
 
 
-	# STAGE 3 -- CHECK SCHEDULER
-	if name == 'stage_3':
-		models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
-		all_eta_min = [0.0,1e-6,1e-5]
-		all_cycles  = [1,2,3]
-
-		# Cross-product
-		cross_product = list(itertools.product(models,all_eta_min,all_cycles))
-
-
-		rows = []
-		for i,combination in enumerate(cross_product):
-
-			model   = combination[0]
-			eta_min = combination[1]
-			cycles  = combination[2]
-
-			sample = {
-				'id':i,
-				'model':model,
-				'seed':476,
-				'epochs':50,
-				'scheduler':"cos",
-				'eta_min':eta_min,
-				'cycles': cycles,
-				'loss':"ce",
-				'bands':3,
-				'labels':2,
-				'optim':"adamw",
-				'lrate':0, #missing -- stage 1
-				'decay':0, #missing
-				'batch':8, #missing
-				'vit_layers':1, #missing -- stage 2
-				'mlp_ratios':4, #missing
-				'cnn_layers':2,  #missing
-				'channels':32 #missing  
-			}
-			rows.append(sample)
-
-
-	# STAGE 4 -- CNN STEM+PATCHING VS PREVIOUS <<<- add CNN2 !
-	if name == 'stage_4':
+	# STAGE 5 -- CNN STEM+PATCHING VS PREVIOUS <<<- add CNN2 !
+	if name == 'stage_5':
 		models = ["UNet_ViT2_CNN","UNet_ViT2_ViT"]
 
 		rows = []

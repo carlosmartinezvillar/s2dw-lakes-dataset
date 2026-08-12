@@ -45,6 +45,8 @@ def load_log(log_path):
 def get_model_best_epoch(log_path):
 	'''
 	Read a log file. 1st line header. Each line is an epoch.
+	Return a dictionary with tuple values, where tuples are
+	a best metric value and its corresponding epoch.
 	'''
 
 	# FILE EXISTS
@@ -150,7 +152,7 @@ def plot_training_log(log_path,best_iou_epoch=None,best_ema_epoch=None):
 
 	# SAVE
 	plt.legend()
-	out_path_1 = f'../figures/loss_{stage_nr}_{model_id}.png'
+	out_path_1 = f'../figures/{stage_nr}/loss_{model_id}.png'
 	plt.savefig(out_path_1)
 	plt.close()
 	print(f"Plot written to {out_path_1}")
@@ -169,10 +171,10 @@ def plot_training_log(log_path,best_iou_epoch=None,best_ema_epoch=None):
 
 	# PLOT
 	ax.plot(tacc1,label='Train acc',linestyle='-.',**params)
-	ax.plot(tiou1,label='Train IoU',linestyle='-.',**params)
+	ax.plot(tiou1,label='Train IoU',linestyle='-',**params)
 	# ax.plot(ttpr1,label='Train tpr',linestyle='-.',**params)
 	# ax.plot(tppv1,label='Train ppv',linestyle='-.',**params)
-	# ax.plot(vacc1,label='Valid acc',linestyle='-',**params)
+	ax.plot(vacc1,label='Valid acc',linestyle='-.',**params)
 	ax.plot(viou1,label='Valid IoU',linestyle='-',**params)
 	# ax.plot(vtpr1,label='Valid tpr',linestyle='-',**params)
 	# ax.plot(vppv1,label='Valid ppv',linestyle='-',**params)
@@ -182,7 +184,7 @@ def plot_training_log(log_path,best_iou_epoch=None,best_ema_epoch=None):
 
 	# SAVE
 	plt.legend()
-	out_path_2 = f'../figures/metrics_{stage_nr}_{model_id}.png'
+	out_path_2 = f'../figures/{stage_nr}/metrics_{model_id}.png'
 	plt.savefig(out_path_2)
 	plt.close()
 	print(f"Plot written to {out_path_2}")
@@ -198,10 +200,10 @@ def sort_ids_by_model(models,hp_list):
 def plot_lrate_vs_decay(model_str,lrates,decays,scores):
 	'''
 	For 'stage_1'.
-	Plot a scatter plot for the decay and lrate hyperparameter search
-	of a model.
+	Plot a scatter plot with decay and lrate for a model.
 	'''
 
+	# easier type
 	lrates = np.array(lrates)
 	decays = np.array(decays)
 	scores = np.array(scores)
@@ -216,28 +218,48 @@ def plot_lrate_vs_decay(model_str,lrates,decays,scores):
 	# print(scores[top5_idx])
 	# print(exp_ids[top5_idx])
 
-	out_path = f'../figures/decaylrate_{model_str}.png'
+	out_path = f'../figures/stage_1/decaylrate_{model_str}.png'
 
 	fig = plt.figure(figsize=(30,15))
 	ax  = fig.add_subplot(111)
 
+	norm = plt.Normalize(vmin=scores.min(), vmax=scores.max())
+	cmap = plt.cm.plasma_r
+
 	# Plot the rest as dots
-	ax.scatter(
+	sc = ax.scatter(
 		lrates[~mask], decays[~mask],
+		c=scores[~mask],
+		cmap=cmap,
+		norm=norm,
 		marker='o',
-		edgecolors='white',
+		edgecolors='black',
 		linewidths=0.5
 	)
 
 	# Plot the top 5 as 'x'
 	ax.scatter(
 		lrates[mask], decays[mask],
+		c=scores[mask],
+		cmap=cmap,
+		norm=norm,
 		marker='x',
-		color='red',
-		linewidths=1.5,
-		s=100,
+		# color='red',
+		linewidths=2.0,
+		s=150,
 		label='Top 5'
 	)
+
+	cbar = fig.colorbar(sc, ax=ax)
+	cbar.set_label('Max EMA(IoU)')
+
+	# fixed axis ranges matching the min/max of the data
+	ax.set_xlim(1e-5, 1e-2)
+	ax.set_ylim(1e-4, 1e-2)  # NOTE: same value twice -- likely a typo, fix this
+
+	# log scale since ranges span multiple orders of magnitude
+	ax.set_xscale('log')
+	ax.set_yscale('log')
 
 	# adjust plot
 	ax.xaxis.set_major_formatter(StrMethodFormatter('{x:.5f}'))
@@ -266,7 +288,7 @@ def plot_batch_vs_iou(model_str,model_scores,model_batches,ema=False):
 	group_labels   = [f"{b}" for b in unique_batches]
 
 	# PLOT
-	out_path = f'../figures/batchiou_{model_str}.png'
+	out_path = f'../figures/stage_1/batchiou_{model_str}.png'
 	fig = plt.figure(figsize=(30,15))
 	ax  = fig.add_subplot(111)
 	ax.boxplot(grouped_scores,labels=group_labels)
@@ -375,8 +397,6 @@ def get_best_stage_1(log_dir):
 			best_hp_ids.append(int(score_dict['id']))
 	fp.close()
 
-	return
-
 	# --------------------------------------------------
 	# SAVE A NEW FILE WITH HPARAMS SET FOR THESE BEST 5
 	# --------------------------------------------------
@@ -393,6 +413,7 @@ def get_best_stage_1(log_dir):
 	# --------------------------------------------------
 	# PLOT TRAINING LOG BEST 5
 	# --------------------------------------------------
+	os.makedirs("../figures/stage_1",exist_ok=True)
 	for model in best_by_model:
 		for score_dict in best_by_model[model]:
 			experiment = score_dict['id']
@@ -418,7 +439,6 @@ def get_best_stage_1(log_dir):
 			score_batch = indexed_hp_list[score_id]['batch']
 			score_iou   = score_dict['iou'][0]
 			score_ema   = score_dict['ema'][0]
-			# score_and_config[model].append((score_id,score_lrate,score_decay,score_batch,score_iou,score_ema))
 			model_lrates.append(score_lrate)
 			model_decays.append(score_decay)
 			model_emas.append(score_ema)
@@ -437,9 +457,24 @@ def get_best_stage_1(log_dir):
 		plot_batch_vs_iou(model,model_emas,model_batches)
 
 
+
 def get_best_stage_2(log_dir):
 	'''
-	Run through all 16 combinations in Stage 2.
+	Check best in 'stage 1' over multiple seeds.
+	'''
+	pass
+
+
+def get_best_stage_3():
+	'''
+	Get the best cosine scheduler parameters
+	'''
+	pass
+
+
+def get_best_stage_4(log_dir):
+	'''
+	Run through all 16 parameter size combinations of the original 4 models.
 	'''
 	# --------------------------------------------------
 	# LOAD & SET STRINGS
@@ -478,14 +513,8 @@ def get_best_stage_2(log_dir):
 		print(line)
 
 
-def get_best_stage_3():
-	'''
-	Get the best cosine scheduler parameters
-	'''
-	pass
 
-
-def get_best_stage_4():
+def get_best_stage_5():
 	'''
 	Evaluate the training performance of ViT2 (patch embedding).
 	'''
