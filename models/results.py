@@ -32,7 +32,7 @@ def calculate_ema(metric,alpha=0.3):
 	return ema
 
 
-def load_log(log_path):
+def load_train_log(log_path):
 	# OPEN/READ
 	with open(log_path,'r') as fp:
 		lines = fp.readlines()
@@ -60,7 +60,7 @@ def get_model_best_epoch(log_path):
 	model_id = log_path.rstrip('.tsv').split('_')[-1]
 
 	# LOAD
-	header,epochs = load_log(log_path)
+	header,epochs = load_train_log(log_path)
 
 	# GET VALIDATION COLUMNS
 	iou_idx = header.index('viou1')
@@ -108,7 +108,7 @@ def plot_training_log(log_path,best_iou_epoch=None,best_ema_epoch=None):
 	stage_nr = log_path.split('/')[-2]
 
 	# OPEN/READ
-	header,epochs = load_log(log_path)
+	header,epochs = load_train_log(log_path)
 
 	# GET LOSS COLS
 	tloss_idx = header.index('tloss')
@@ -309,6 +309,20 @@ def plot_batch_vs_iou(model_str,model_scores,model_batches,ema=False):
 	print(f"Plot written to {out_path}")
 
 
+def read_test_file(log_path):
+	with open(log_path,'r') as fp:
+		lines = fp.readlines()
+
+	# READ TEST RESULTS
+	header = lines[0]
+	result = lines[1].rstrip('\n')
+	test_iou = result[header.index('_iou1')]
+	test_ppv = result[header.index('_ppv1')]
+	test_tpr = result[header.index('_tpr1')]
+
+	return test_iou,test_ppv,test_tpr
+
+
 def check_log_dir(log_dir,folder_range=160):
 	expected_files = {f"epochs_{i:03}.tsv" for i in range(folder_range)}
 	present_files = set(glob.glob("epochs_*.tsv",root_dir=log_dir))
@@ -461,61 +475,216 @@ def get_best_stage_1(log_dir):
 		plot_batch_vs_iou(model,model_emas,model_batches)
 
 
-
 def get_best_stage_2(log_dir):
 	'''
-	Check best in 'stage 1' over multiple seeds.
+	Check a few (3) best parameter combinations in 'stage 1' over multiple seeds.
 	'''
-	pass
+	with open('./hparams/stage_2.json','r') as fp:
+		hp_list = [json.loads(line) for line in fp.readlines() if line != "\n"]
+
+	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
+
+	grouped_ids = {k:{} for k in models}
+	for row in hp_list:
+		if row['old_id'] not in grouped_ids[row['model']]:
+			grouped_ids[row['model']].update({row['old_id']:[]})
+		grouped_ids[row['model']][row['old_id']].append(row['id'])
 
 
-def get_best_stage_3():
+	grouped_results = {
+	    outer_key: {inner_key: None for inner_key in inner_dict}
+	    for outer_key, inner_dict in grouped_ids.items()
+	}
+
+	for a_model in grouped_ids:
+		for old_id in a_model:
+			ious = []
+			emas = []
+			for new_id in old_id:
+				log_file = f"{log_dir}/stage_2/epochs_{new_id:03}.tsv"
+				results  = get_model_best_epoch(log_file)
+				ious.append(results['iou'])[0]
+				emas.append(results['ema'])[0]
+			mean_iou = np.array(ious).mean()
+			stdd_iou = np.std(np.array(ious))
+			mean_ema = np.array(emas).mean()
+			stdd_ema = np.std(np.array(emas))
+			grouped_results[a_model][old_id] = ((mean_iou,stdd_iou),(mean_ema,stdd_ema))
+
+
+	for a_model in grouped_results:
+		for old_id in a_model:
+			print(f"{a_model}")
+			print("-"*40)
+			print(f"stage 1 id: {old_id} | {grouped_results[a_model][old_id]} \n")
+
+
+def get_best_stage_3(log_dir):
 	'''
 	Get the best cosine scheduler parameters
 	'''
-	pass
+	with open('./hparams/stage_3.json','r') as fp:
+		hp_list = [json.loads(line) for line in fp.readlines() if line != "\n"]
+	indexed_hp_list = {row['id']:row for row in hp_list}
+
+	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
+
+	# GROUP RUN/EXPERIMENT ID's BY MODEL TYPE
+	grouped_ids = {k:[] for k in models}
+	for row in hp_list:
+		grouped_ids[row['model']].append(row['id'])
+
+	# LOAD AND GROUP DICT OF RESULTS FOR EACH MODEL RUN
+	grouped_results = {k:[] for k in grouped_ids}
+	for model,experiments in grouped_ids.items():
+		model_results = []
+		for e in experiments:
+			log_file = f"{log_dir}/stage_3/epochs_{e:03}.tsv"
+			result   = get_model_best_epoch(log_file)
+			model_results.append(result)
+
+		# SORT MODEL RESULTS
+		ious = [r['iou'] for r in model_results]
+		# emas = [r['ema'] for r in model_results]
+		sorted_ious = sorted(enumerate(ious),key=lambda x: x[1],reverse=True)
+		sorted_idxs = [_[0] for _ in sorted_ious]
+
+		print(f"\n{model}")
+		print("-"*40)
+		for i in sorted_idxs:
+			a_result    = model_results[i]
+			hparameters = indexed_hp_list[int(a_result['id'])]
+			s = f"id: {a_result['id']} | "
+			s += f"iou: {a_result['iou']} | "
+			s += f"ema: {a_result['ema']} | "
+			s += f"eta_min: {hparameters['eta_min']} | cycles: {hparameters['cycles']}"
+			print(s)
+
+		# plot_training_log() for top 4.
+		best_idx = sorted_idxs[0]
+		plot_training_log(f"{log_dir}/stage_3/epochs_{best_idx:03}.tsv")
+
+
+def get_base_test_results(log_dir):
+	'''
+	Get test set results for best 4 models found after stage 3.
+	This is the main result.
+	'''
+	with open('./hparams/stage_3.json','r') as fp:
+		hp_list = [json.loads(line) for line in fp.readlines() if line != "\n"]
+	indexed_hp_list = {row['id']:row for row in hp_list}
+
+	best_model_indices = [0,1,2,3] # MISSING!!
+
+	for i in best_model_indices:
+		hparams = indexed_hp_list[i]
+
+		# LOAD TEST LOG
+		log_file = f"{log_dir}/stage_3/test_{i:03}.tsv"
+		test_iou,test_precision,test_recall = read_test_file(log_file)
+
+		# PRINT
+		print(f"id: {i} | {hparams['model']} | ",end='')
+		print(f"iou: {test_iou} | prec: {test_precision} | recall: {test_recall} ")
 
 
 def get_best_stage_4(log_dir):
 	'''
+	Parameter size ablation.
 	Run through all 16 parameter size combinations of the original 4 models.
 	'''
 	# --------------------------------------------------
 	# LOAD & SET STRINGS
 	# --------------------------------------------------
-	with open('./hparams/stage_2.json','r') as fp:
+	with open('./hparams/stage_4.json','r') as fp:
 		hp_list = [json.loads(line) for line in fp.readlines() if line != "\n"]
+	indexed_hp_list = {row['id']:row for row in hp_list}
+	
 	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
+
+	# 4 EXPERIMENTS/RUN PER MODEL KIND
+	grouped_ids = {k:[] for k in models}
+	for row in hp_list:
+		grouped_ids[row['model']].append(row['id'])
 
 	# --------------------------------------------------
 	# VALIDATION RESULTS
 	# --------------------------------------------------
-	all_results = []
-	for row in hp_list:
-		experiment = row['id']
-		log_file   = f"{log_dir}/stage_2/epochs_{experiment:03}.tsv" # <--- fails if no log
-		best_epoch = get_model_best_epoch(log_file)
-		all_results.append(best_epoch)
+	# GROUP BY MODEL TO ENSURE SORTING
+	grouped_results = {k:[] for k in models}
+	for model,experiments in grouped_ids.items():
+		for e in experiments:
+			log_file = f"{log_dir}/stage_4/epochs_{experiment:03}.tsv" # <--- fails if no log
+			result   = get_model_best_epoch(log_file)
+			grouped_results[model].append(result)
 
-	for score_dict in all_results:
-		line = f"id: {score_dict['id']} | iou: {score_dict['iou']} | ema: {score_dict['ema']}"
-		print(line)
+	# PRINT GROUPED RESULTS
+	for m in grouped_results:
+
+		# PRINT GROUPED
+		print(f"\n{m}")
+		print("-"*40)
+
+		for score_dict in grouped_results[m]:
+
+			# get score hyperparameters
+			hparams = indexed_hp_list[int(score_dict['id'])]
+			vit_n = hparams['vit_layers']
+			cnn_n = hparams['cnn_layers']
+			chans = hparams['channels']
+			if vit_n == 1:
+				if chans == 32:
+					size = "Base"
+				else:
+					size = "Tiny"
+			else:
+				if chans == 32:
+					size = "Large"
+				else:
+					size = "Small"
+
+			# print
+			s = f"id: {score_dict['id']} | iou: {score_dict['iou']} | "
+			s += f"ema: {score_dict['ema']} | "
+			# s + f"{vit_n} | {cnn_n} | {chans}"
+			s += f"{size}"
+			print(s)
+
 
 	# --------------------------------------------------
 	# TEST RESULTS
 	# --------------------------------------------------
-	for i,row in enumerate(hp_list):
-		experiment = row['id']
-		log_file = f"{log_dir}/stage_2/test_{experiment:03}.tsv"
-		with open(log_file,'r') as fp:
-			lines = fp.readlines()
-		header = lines[0]
-		result = lines[1].rstrip('\n')
-		if i == 0:
-			print(f"{'-'*20} | {header}")
-		line = f"{row['model']} | ID: {experiment} | {result}"
-		print(line)
+	for model, experiments in group_ids.items():
 
+		# PRINT GROUPED
+		print(f"\n{model}")
+		print("-"*40)
+
+		for e in experiments:
+
+			# LOAD TEST LOG
+			log_file = f"{log_dir}/stage_4/test_{e:03}.tsv"
+			test_iou,test_ppv,test_tpr = read_test_file(log_file)
+
+			# GET CORRESPONDING HYPERPARAMETER DICT
+			hparams = indexed_hp_list[e]
+			vit_n = hparams['vit_layers']
+			cnn_n = hparams['cnn_layers']
+			chans = hparams['channels']
+			if vit_n == 1:
+				if chans == 32:
+					size = "Base "
+				else:
+					size = "Tiny "
+			else:
+				if chans == 32:
+					size = "Large"
+				else:
+					size = "Small"
+
+			#PRINT
+			s = f"id: {e} | {size} | {test_iou} | {test_precision} | {test_recall} "
+			print(s)
 
 
 def get_best_stage_5():
@@ -543,13 +712,6 @@ if __name__ == '__main__':
 	args = parse_args()
 	log_dir = args.log_dir.rstrip('/')
 
-	# experiment = 0
-	# log_file = f"{log_dir}/stage_1/epochs_{experiment:03}.tsv"
-
-	# best = get_model_best_epoch(log_file)
-	# print(best)
-	# best_ema_epoch = best['ema'][1]
-	# plot_training_log(log_file,best_epoch=best_ema_epoch)
-
 	# check_log_dir(log_dir)
-	get_best_stage_1(log_dir)
+	# get_best_stage_1(log_dir)
+	# get_best_stage_2(log_dir)
