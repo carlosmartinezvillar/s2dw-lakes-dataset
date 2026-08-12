@@ -18,13 +18,16 @@ def set_seed(seed: int):
 
 def stage_1():
 	# STAGE 1 -- GET BEST LEARNING RATE, BATCH SIZE, WEIGHT DECAY
+
+	# FIXED PARAMETERS
 	name = 'stage_1'
 	n_trials = 40
 	models   = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
-	rows = []
 
+	rows = []
 	for i,m in enumerate(models):
 
+		# SEARCH
 		lrate = 10**np.random.uniform(-5,-2,size=n_trials)
 		decay = 10**np.random.uniform(-4,-2,size=n_trials)
 		batch = np.random.choice([8,16],size=n_trials)
@@ -54,51 +57,60 @@ def stage_1():
 
 			rows.append(sample)
 
+	# write to ./hparams/stage_1.json
 	write_hp_file(name,rows)
 
 
 def stage_2():
-	# STAGE 2 -- BEST LEARNING RATE, WEIGHT DECAY ACROSS SEEDS
+	'''
+	STAGE 2 -- BEST LEARNING RATE, WEIGHT DECAY ACROSS SEEDS
+	'''
 
-
+	# FIXED PARAMETERS
 	name = 'stage_2'
 	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
-	rows   = []				 
+	best  = [15,13,19,76,70,67,101,90,84,153,141,138] #best 3 per model from stage_1()
 
+	# SEARCH
+	seeds = [176,276,376,476,576]	
+				 
 	with open('./hparams/stage_1.json','r') as fp:
 		stage_1 = [json.loads(line) for line in fp.readlines() if line != "\n"]
 	indexed_stage_1 = {row['id']:row for row in stage_1}
 
-	seeds = [176,276,376,476,576]
-	best  = [15,13,19,76,70,67,101,90,84,153,141,138] #best 3 per model from stage_1()
+	# COMBINE
 	cross_product = list(itertools.product(seeds,best))
 
+	rows   = []
 	for i,(s,idx) in enumerate(cross_product):
 		sample = copy.deepcopy(indexed_stage_1[idx])
 		sample["seed"]   = s
 		sample["epochs"] = 65
 		sample["old_id"] = sample["id"]
 		sample["id"]     = i
-		# print(s,idx)
-		# print(sample)
 		rows.append(sample)
 
-	# HARD CODE INSTEAD? 
-	# cnn_cnn_best = [{'lrate':0.0002,'decay':0.00112,'batch':16},{''}... etc.] 
-
+	# write to ./hparams/stage_2.json
 	write_hp_file(name,rows)
 
 
 def stage_3():
-	# STAGE 3 -- CHECK SCHEDULER
+	'''
+	STAGE 3 -- CHECK SCHEDULER
+	'''
+
+	# FIXED PARAMETERS
 	name = 'stage_3'
 	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
+	bestlr = [0,0,0,0]
+	bestwd = [1,1,1,1]
+
+	# SEARCH
 	all_eta_min = [0.0,1e-6,1e-5]
 	all_cycles  = [1,2,3]
 
-	# Cross-product
+	# COMBINE
 	cross_product = list(itertools.product(models,all_eta_min,all_cycles))
-
 
 	rows = []
 	for i,combination in enumerate(cross_product):
@@ -106,6 +118,9 @@ def stage_3():
 		model   = combination[0]
 		eta_min = combination[1]
 		cycles  = combination[2]
+
+		lr = bestlr[models.index(model)]
+		wd = bestwd[models.index(model)]
 
 		sample = {
 			'id':i,
@@ -119,13 +134,13 @@ def stage_3():
 			'bands':3,
 			'labels':2,
 			'optim':"adamw",
-			'lrate':0, #missing -- stage 1
-			'decay':0, #missing
-			'batch':8, #missing
-			'vit_layers':1, #missing -- stage 2
-			'mlp_ratios':4, #missing
-			'cnn_layers':2,  #missing
-			'channels':32 #missing  
+			'lrate':lr,
+			'decay':wd,
+			'batch':16,
+			'vit_layers':1,
+			'mlp_ratios':5,
+			'cnn_layers':2,
+			'channels':32
 		}
 		rows.append(sample)
 
@@ -142,30 +157,34 @@ def stage_4():
 	base  = {'cnn_layers':2,'vit_layers':1,'channels':32,'mlp_ratio':5}
 	large = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':5}
 	'''	
+
+	# FIXED PARAMETERS
 	name = 'stage_4'
-
-	lrate = [] #best from stage 1,2
-	# "lrate": 0.0002 CNN-CNN
-	decay = [] #best from stage 1,2
-	batch = [] #best from stage 1,2
-
 	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
+	bestlr = [0,0,0,0] #missing
+	bestwd = [1,1,1,1]
+	best_eta_min = [0,0,0,0]
+	best_cycles  = [1,1,1,1]	
+
+	# SEARCH
 	cnn_layers = [2,3] # follows vit_layers = [1,2]
 	channels   = [16,32]
 	
-	# Cross-product
+	# COMBINE
 	cross_product = list(itertools.product(models,channels,cnn_layers)) #16 combinations
-	rows = []
 
-	for i in range(len(cross_product)):
-		model = cross_product[i][0]
-		channels = cross_product[i][1]
-		cnn_layers = cross_product[i][2]
+	rows = []
+	for i,(model,channels,cnn_layers) in enumerate(cross_product):
 
 		if cnn_layers == 3:
 			vit_layers = 2
 		else:
 			vit_layers = 1
+
+		lr = bestlr[models.index(model)]
+		wd = bestwd[models.index(model)]
+		s_min = best_eta_min[models.index(model)]
+		s_cyc = best_cycles[models.index(model)]
 
 		sample = {
 			'id':i,
@@ -173,15 +192,15 @@ def stage_4():
 			'seed':476,
 			'epochs':65,
 			'scheduler':"cos",
-			'eta_min':0.0, #missing
-			'cycles': 1, #missing
+			'eta_min': s_min,
+			'cycles': s_cyc,
 			'loss':"ce",
 			'bands':3,
 			'labels':2,
 			'optim':"adamw",
-			'lrate':0, #missing
-			'decay':0, #missing
-			'batch':8, #missing
+			'lrate':lr,
+			'decay':wd,
+			'batch':16,
 			'vit_layers':vit_layers,
 			'mlp_ratio':5,
 			'cnn_layers':cnn_layers, 
@@ -194,31 +213,44 @@ def stage_4():
 
 def stage_5():
 	# STAGE 5 -- CNN STEM+PATCHING VS PREVIOUS <<<- add CNN2 !
+
+	# FIXED PARAMETERS
 	name = 'stage_5'
-	models = ["UNet_ViT2_CNN","UNet_ViT2_ViT"]
+	bestlr = [0,0,0,0] #missing
+	bestwd = [1,1,1,1]
+	best_eta_min = [0,0,0,0]
+	best_cycles  = [1,1,1,1]
+
+	# SEARCH
+	models = ["UNet_ViT2_CNN","UNet_ViT2_ViT","UNet_CNN2_CNN","UNet_CNN2_ViT"]
 
 	rows = []
-
 	for i,m in enumerate(models):
+
+		lr = bestlr[models.index(m)]
+		wd = bestwd[models.index(m)]
+		s_min = best_eta_min[models.index(m)]
+		s_cyc = best_cycles[models.index(m)]
+
 		sample = {
 			'id':i,
 			'model':m,
 			'seed':476,
-			'epochs':50,
+			'epochs':65,
 			'scheduler':"cos",
-			'eta_min':0.0, #missing -- stage 3
-			'cycles': 1, #missing -- stage 3
+			'eta_min': s_min,
+			'cycles': s_cyc,
 			'loss':"ce",
 			'bands':3,
 			'labels':2,
 			'optim':"adamw",
-			'lrate':0, #missing -- stage 1
-			'decay':0, #missing
-			'batch':8, #missing
-			'vit_layers':1, #missing -- stage 2
-			'mlp_ratios':4,
+			'lrate':lr,
+			'decay':wd,
+			'batch':16,
+			'vit_layers':1,
+			'mlp_ratio':5,
 			'cnn_layers':2, 
-			'channels':32  
+			'channels':16 
 		}
 		rows.append(sample)
 
@@ -228,7 +260,6 @@ def stage_5():
 def write_hp_file(name,rows):
 	# WRITE JSON FILE
 	out_file_path = f"./hparams/{name}.json"		
-	# assert not os.path.isfile(out_file_path), f"Overwriting existing file {out_file_path}"
 	with open(out_file_path,'w') as fp:
 		for line in rows:
 			json.dump(line,fp)
@@ -239,6 +270,6 @@ def write_hp_file(name,rows):
 if __name__ == '__main__':
 	set_seed(476) #Set seed to fix list of hyperparameters
 	# stage_1()
-	stage_2()
-	# set_hyperparameters('stage_3')
+	# stage_2()
+	stage_3()
 	# set_hyperparameters('stage_4')
