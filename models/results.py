@@ -477,7 +477,8 @@ def get_best_stage_1(log_dir):
 
 def get_best_stage_2(log_dir):
 	'''
-	Check a few (3) best parameter combinations in 'stage 1' over multiple seeds.
+	Check a few (3) best parameter combinations in 'stage 1' for each model type
+	over multiple seeds. 4 models x 3 combinations x 5 samples/seeds = 60 runs
 	'''
 	with open('./hparams/stage_2.json','r') as fp:
 		hp_list = [json.loads(line) for line in fp.readlines() if line != "\n"]
@@ -496,6 +497,7 @@ def get_best_stage_2(log_dir):
 	    for outer_key, inner_dict in grouped_ids.items()
 	}
 
+	# CALCULATE AVERAGES
 	for a_model in grouped_ids:
 		for old_id in a_model:
 			ious = []
@@ -511,12 +513,14 @@ def get_best_stage_2(log_dir):
 			stdd_ema = np.std(np.array(emas))
 			grouped_results[a_model][old_id] = ((mean_iou,stdd_iou),(mean_ema,stdd_ema))
 
-
+	# PRINT -- 3 AVGs PER MODEL
 	for a_model in grouped_results:
+		print(f"{a_model}")
+		print("-"*40)		
 		for old_id in a_model:
-			print(f"{a_model}")
-			print("-"*40)
-			print(f"stage 1 id: {old_id} | {grouped_results[a_model][old_id]} \n")
+			_iou = grouped_results[a_model][old_id][0]
+			_ema = grouped_results[a_model][old_id][1]
+			print(f"stage 1 id: {old_id} | iou: {_iou} | ema: {_ema} \n")
 
 
 def get_best_stage_3(log_dir):
