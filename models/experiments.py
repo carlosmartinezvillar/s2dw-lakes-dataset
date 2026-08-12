@@ -212,7 +212,9 @@ def stage_4():
 
 
 def stage_5():
-	# STAGE 5 -- CNN STEM+PATCHING VS PREVIOUS <<<- add CNN2 !
+	'''
+	STAGE 5 -- CNN STEM+PATCHING VS PREVIOUS <<<- add CNN2 !
+	'''
 
 	# FIXED PARAMETERS
 	name = 'stage_5'
@@ -272,4 +274,5 @@ if __name__ == '__main__':
 	# stage_1()
 	# stage_2()
 	stage_3()
-	# set_hyperparameters('stage_4')
+	# stage_4()
+	

@@ -14,7 +14,7 @@ import dataloader
 # GLOBAL VARS
 ################################################################################
 DATA_DIR  = None
-MODEL_DIR = None
+MODEL_PATH = None
 LOG_DIR   = None
 CUDA_DEV  = None
 
@@ -27,14 +27,14 @@ def parse_args():
 	required = parser.add_argument_group('Required arguments')
 	required.add_argument('--data-dir',required=True,
 		help='Input dataset directory.')
-	required.add_argument('--net-dir',required=True,
+	required.add_argument('--checkpoint',required=True,
 		help='Directory of trained model weights.')
 	required.add_argument('--log-dir',required=True,
 		help='Dest dir path for test results')
 	required.add_argument('-p','--params',required=True,
 		help='Path to JSON hyperparameter file.')
-	required.add_argument('--id',required=True,type=int,
-		help='Model id number in JSON hyperparameter file.')
+	# required.add_argument('--id',required=True,type=int,
+	# 	help='Model id number in JSON hyperparameter file.')
 
 	optional = parser.add_argument_group('Optional arguments')
 	optional.add_argument('--gpu',required=False,type=int,default=0,
@@ -45,7 +45,7 @@ def parse_args():
 
 	# CHECK
 	assert os.path.isdir(args.data_dir), f"No path found for data dir in {args.data_dir}"
-	assert os.path.isdir(args.net_dir), f"No path found for checkpoint dir in {args.net_dir}"
+	assert os.path.isfile(args.checkpoint), f"No path found for checkpoint dir in {args.checkpoint}"
 	assert os.path.isdir(args.log_dir), f"No path found for log dir {args.log_dir}"
 	assert os.path.isfile(args.params), f"No hyperparameter found in {args.params}"
 	if args.gpu != 0:
@@ -53,11 +53,11 @@ def parse_args():
 
 	# SET
 	global DATA_DIR
-	global MODEL_DIR
+	global MODEL_PATH
 	global LOG_DIR
 	global CUDA_DEV
 	DATA_DIR  = args.data_dir
-	MODEL_DIR = args.net_dir
+	MODEL_PATH = args.checkpoint
 	LOG_DIR   = args.log_dir
 	CUDA_DEV  = torch.device(f"cuda:{args.gpu}")
 
@@ -205,25 +205,30 @@ def test(model,dataloader,n_classes):
 if __name__ == '__main__':
 
 	# LOAD SCRIPT PARAMETERS
-	parse_args()
+	args = parse_args()
 
 	# LOAD HYPERPARAMETER DICT
 	with open(args.params,'r') as fp:
 		HP_LIST = [json.loads(line) for line in fp.readlines() if line != "\n"]
 	hp_list_indexed = {row['id']:row for row in HP_LIST}
-	assert args.id in hp_list_indexed, f"MODEL ID '{args.id}' NOT IN HYPERPARAMETER FILE."
-	HP = hp_list_indexed[args.id]
+
+	checkpoint_path = args.checkpoint
+	model_id = args.checkpoint.split('/')[-1].split('_')[1]
+	start_ep = args.checkpoint.split('/')[-1].split('_')[-1].split('.')[0].lstrip('e')
+
+	# LOAD HYPERPARAMETERS
+	assert model_id in hp_list_indexed, f"MODEL ID '{model_id}' NOT IN HYPERPARAMETER FILE."
+	HP = hp_list_indexed[model_id]
 	n_bands         = HP['bands']
 	n_classes       = HP['labels']
 	batch_size      = HP['batch']
 	model_class_str = HP['model']
-	model_id        = HP['id']
+	# model_id        = HP['id']
 
-	# LOAD MODEL TYPE & CHECKPOINT WEIGHTS
-	checkpoint_path = f"{MODEL_DIR}/best_{model_id:03}.pth.tar"
-	# net = eval(f"models.{model_class_str}({model_id},{n_bands},{n_classes})")
+	# LOAD CHECKPOINT WEIGHTS
+	# checkpoint_path = f"{MODEL_DIR}/best_{model_id:03}_e{epoch:02}.pth.tar"
 	model = getattr(models,models_class_str)
-	net = model(model_id,n_bands,n_classes)
+	net   = model(model_id,n_bands,n_classes)
 	net,_,_,_ = load_checkpoint(checkpoint_path,net)
 	net = net.to(CUDA_DEV)
 
@@ -239,5 +244,5 @@ if __name__ == '__main__':
 		prefetch_factor=10
 	)
 
-	# RUN TEST
+	# RUN TEST -- 
 	test(net,dataloader,n_classes)
