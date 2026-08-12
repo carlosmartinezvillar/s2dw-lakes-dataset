@@ -337,7 +337,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 	# AUTOMATIC MIXED PRECISION -- switched to bfloat16
 	# scaler = torch.amp.GradScaler("cuda",enabled=True,init_scale=1024)
 
-	# LOGS
+	# TRAINING/VALIDATION LOGGING
 	log_file_path = f'{LOG_DIR}/epochs_{model.model_id:03}.tsv'
 	logger        = Logger(log_file_path,n_classes)
 
@@ -359,13 +359,13 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 		gpu_mat_tr = torch.zeros((n_classes,n_classes),device=CUDA_DEV,dtype=torch.int64) 
 		gpu_mat_va = torch.zeros((n_classes,n_classes),device=CUDA_DEV,dtype=torch.int64)
 
-		# Single epoch time
+		# EPOCH TIME
 		epoch_start_time = time.perf_counter()
 
 		############################################################
 		# TRAINING
 		############################################################
-		# LOGS		
+		# TRAIN LOGS		
 		loss_sum_tr   = torch.zeros(1,device=CUDA_DEV)
 		sample_sum_tr = torch.zeros(1,device=CUDA_DEV)
 
@@ -408,7 +408,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 		if scheduler is not None:
 			scheduler.step()
 
-		# TRAINING METRICS FOR LOG
+		# TRAINING METRICS
 		loss_tr    = (loss_sum_tr/sample_sum_tr).item() #---------------cpu-gpu sync
 		cpu_mat_tr = gpu_mat_tr.cpu() #---------------------------------cpu-gpu sync
 		tr_ppv,tr_tpr,tr_acc,tr_iou = calculate_metrics(cpu_mat_tr) #tensor,result per class 
@@ -417,7 +417,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 		############################################################
 		# VALIDATION
 		############################################################
-		# LOGS		
+		# VALIDATION LOGS		
 		loss_sum_va   = torch.zeros(1,device=CUDA_DEV)
 		sample_sum_va = torch.zeros(1,device=CUDA_DEV)
 
@@ -444,7 +444,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 				update_confusion_matrix(gpu_mat_va,T,Y,n_classes)
 
 
-		# VALIDATION METRICS FOR LOG
+		# VALIDATION METRICS
 		loss_va    = (loss_sum_va / sample_sum_va).item() #-------------cpu-gpu sync
 		cpu_mat_va = gpu_mat_va.cpu() #---------------------------------cpu-gpu sync
 		va_ppv,va_tpr,va_acc,va_iou = calculate_metrics(cpu_mat_va)
@@ -453,16 +453,16 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 		############################################################
 		# LOG EPOCH
 		############################################################
-		# TIME
+		# EPOCH TIME
 		epoch_time = time.perf_counter() - epoch_start_time
 		print(f'\nEpoch time: {epoch_time:.2f}s')
 
-		# RESULTS
+		# LOG THIS EPOCH RESULTS
 		logger.log({'tloss': loss_tr, 'vloss': loss_va,
 			'tacc': tr_acc, 'ttpr':tr_tpr,'tppv':tr_ppv,'tiou': tr_iou, 
 			'vacc': va_acc, 'vtpr': va_tpr, 'vppv': va_ppv, 'viou': va_iou})
 
-		# EPOCH VALIDATION IoU -- BEST METRIC
+		# EPOCH VALIDATION IoU -- IoU/mIoU
 		if n_classes > 2:
 			epoch_iou = va_iou.mean().item() #mIoU for 3+ classes
 		else:
@@ -483,9 +483,15 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 			best_iou   = epoch_iou
 			best_epoch = epoch
 
-	print(f'\nBest validation IoU: {best_iou:.5f} -- Epoch {best_epoch}')
-	print(f'Best (EMA) validation IoU: {best_iou_ema:.5f} -- Epoch {best_epoch_ema}')
-	print(f'Epochs saved: {recent_best.epochs()}')
+	############################################################
+	# LOG OVERALL
+	############################################################
+	mem_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
+	print(f'\nBest validation IoU:    {best_iou:.5f} -- Epoch {best_epoch}')
+	print(f'Best validation EMA(IoU): {best_iou_ema:.5f} -- Epoch {best_epoch_ema}')
+	print(f'Epochs saved: {recent_best.epochs()}') 
+	print(f"Peak GPU memory allocated: {mem_gb:.2f} GB")
+
 
 
 ####################################################################################################
