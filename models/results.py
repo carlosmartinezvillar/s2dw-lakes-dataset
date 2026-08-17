@@ -15,7 +15,7 @@ from matplotlib.ticker import StrMethodFormatter
 import numpy as np
 import argparse
 import json
-
+from scipy import stats
 
 FIG_SIZE = (10,5)
 
@@ -497,30 +497,44 @@ def get_best_stage_2(log_dir):
 	    for outer_key, inner_dict in grouped_ids.items()
 	}
 
-	# CALCULATE AVERAGES
+	# print(grouped_ids)
+	# return
+
+	# CALCULATE ESTIMATORS GROUPED BY STAGE 1 MODEL
 	for a_model in grouped_ids:
-		for old_id in a_model:
+		for old_id in grouped_ids[a_model]:
 			ious = []
 			emas = []
-			for new_id in old_id:
+			for new_id in grouped_ids[a_model][old_id]:
 				log_file = f"{log_dir}/stage_2/epochs_{new_id:03}.tsv"
 				results  = get_model_best_epoch(log_file)
-				ious.append(results['iou'])[0]
-				emas.append(results['ema'])[0]
+				ious.append(results['iou'][0])
+				emas.append(results['ema'][0])
+
+			# AVG and STD DEV
 			mean_iou = np.array(ious).mean()
 			stdd_iou = np.std(np.array(ious))
 			mean_ema = np.array(emas).mean()
 			stdd_ema = np.std(np.array(emas))
 			grouped_results[a_model][old_id] = ((mean_iou,stdd_iou),(mean_ema,stdd_ema))
 
+			#t-distribution 95% ci intervals 
+			n    = len(ios)
+			sem  = ious.std(ddof=1) / np.sqrt(n)
+			ci95 = stats.t.invterval(0.95,df=4,loc=mean_iou,scale=sem)
+
 	# PRINT -- 3 AVGs PER MODEL
 	for a_model in grouped_results:
 		print(f"{a_model}")
 		print("-"*40)		
-		for old_id in a_model:
+		for old_id in grouped_ids[a_model]:
 			_iou = grouped_results[a_model][old_id][0]
 			_ema = grouped_results[a_model][old_id][1]
 			print(f"stage 1 id: {old_id} | iou: {_iou} | ema: {_ema} \n")
+
+	# t_stat, p_value = stats.ttest_ind(scores_A, scores_B, equal_var=False)
+	# if p_value < 0.05:
+		# print("significant")
 
 
 def get_best_stage_3(log_dir):
@@ -718,4 +732,4 @@ if __name__ == '__main__':
 
 	# check_log_dir(log_dir)
 	# get_best_stage_1(log_dir)
-	# get_best_stage_2(log_dir)
+	get_best_stage_2(log_dir)
