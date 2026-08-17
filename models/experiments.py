@@ -144,7 +144,7 @@ def stage_3():
 			'decay':wd,
 			'batch':16,
 			'vit_layers':1,
-			'mlp_ratios':5,
+			'mlp_ratio':5,
 			'cnn_layers':2,
 			'channels':32
 		}
