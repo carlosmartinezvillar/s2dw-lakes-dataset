@@ -16,6 +16,7 @@ import numpy as np
 import argparse
 import json
 from scipy import stats
+import itertools
 
 FIG_SIZE = (10,5)
 
@@ -479,6 +480,7 @@ def get_best_stage_2(log_dir):
 	'''
 	Check a few (3) best parameter combinations in 'stage 1' for each model type
 	over multiple seeds. 4 models x 3 combinations x 5 samples/seeds = 60 runs
+	From here we select: 19, 76, 84, and 138
 	'''
 	with open('./hparams/stage_2.json','r') as fp:
 		hp_list = [json.loads(line) for line in fp.readlines() if line != "\n"]
@@ -497,10 +499,7 @@ def get_best_stage_2(log_dir):
 	    for outer_key, inner_dict in grouped_ids.items()
 	}
 
-	# print(grouped_ids)
-	# return
-
-	# CALCULATE ESTIMATORS GROUPED BY STAGE 1 MODEL
+	# COLLECT VALIDATION RESULTS FOR ALL RUNS
 	for a_model in grouped_ids:
 		for old_id in grouped_ids[a_model]:
 			ious = []
@@ -511,30 +510,45 @@ def get_best_stage_2(log_dir):
 				ious.append(results['iou'][0])
 				emas.append(results['ema'][0])
 
-			# AVG and STD DEV
-			mean_iou = np.array(ious).mean()
-			stdd_iou = np.std(np.array(ious))
-			mean_ema = np.array(emas).mean()
-			stdd_ema = np.std(np.array(emas))
-			grouped_results[a_model][old_id] = ((mean_iou,stdd_iou),(mean_ema,stdd_ema))
+			grouped_results[a_model][old_id] = {'ious': np.array(ious),'emas': np.array(emas)}
 
-			#t-distribution 95% ci intervals 
-			n    = len(ios)
-			sem  = ious.std(ddof=1) / np.sqrt(n)
-			ci95 = stats.t.invterval(0.95,df=4,loc=mean_iou,scale=sem)
 
-	# PRINT -- 3 AVGs PER MODEL
+	# PRINT STATS -- FOR EACH MODEL TYPE
 	for a_model in grouped_results:
-		print(f"{a_model}")
-		print("-"*40)		
-		for old_id in grouped_ids[a_model]:
-			_iou = grouped_results[a_model][old_id][0]
-			_ema = grouped_results[a_model][old_id][1]
-			print(f"stage 1 id: {old_id} | iou: {_iou} | ema: {_ema} \n")
+		print(f"\n{a_model}")
+		print("-"*40)
 
-	# t_stat, p_value = stats.ttest_ind(scores_A, scores_B, equal_var=False)
-	# if p_value < 0.05:
-		# print("significant")
+		# AVGs PER MODEL TYPE
+		for old_id in grouped_ids[a_model]:
+			mean_iou = grouped_results[a_model][old_id]['ious'].mean().round(5)
+			mean_ema = grouped_results[a_model][old_id]['emas'].mean().round(5)
+			stdd_iou = grouped_results[a_model][old_id]['ious'].std().round(5)
+			stdd_ema = grouped_results[a_model][old_id]['emas'].std().round(5)
+			n      = len(grouped_results[a_model][old_id]['ious'])
+			se_iou = grouped_results[a_model][old_id]['ious'].std(ddof=1) / np.sqrt(n)
+			ci95   = tuple(np.round(stats.t.interval(0.95,df=4,loc=mean_iou,scale=se_iou),5))
+			s = f"stage 1 id: {old_id} | iou: {mean_iou}+-{stdd_iou} | ema: {mean_ema}+-{stdd_ema}"
+			s += f" | CI95: {ci95}"
+			print(s)
+
+		# PAIRWISE T-TEST (UNEQUAL VARIANCE) TO BE ABSOLUTELY SURE
+		old_ids        = grouped_ids[a_model]
+		n_comparisons  = len(list(itertools.combinations(old_ids,2)))
+		adjusted_alpha = 0.10 / n_comparisons #Bonferroni correction
+
+		print("\nPairwise mean t-test:")
+		for id_a, id_b in itertools.combinations(old_ids,2):
+			ious_a = grouped_results[a_model][id_a]['ious']
+			ious_b = grouped_results[a_model][id_b]['ious']
+			mean_a = ious_a.mean().round(5)
+			mean_b = ious_b.mean().round(5)
+			t_stat,p_val = stats.ttest_ind(ious_a,ious_b,equal_var=False)
+
+			significant = "*" if p_val < adjusted_alpha else ""
+
+			s2 = f"{id_a} v {id_b} | mean diff: {mean_a} - {mean_b} | t={t_stat:.5f} | p={p_val:.5f} {significant}"
+			print(s2)
+
 
 
 def get_best_stage_3(log_dir):
