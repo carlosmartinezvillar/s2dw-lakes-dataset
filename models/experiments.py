@@ -101,9 +101,15 @@ def stage_3():
 
 	# FIXED PARAMETERS
 	name = 'stage_3'
+
+	#BEST MODELS FOR EACH IN STAGE 1 & 2: 19,76,84,138 
+	# 19: "lrate": 0.00022, "decay": 0.00837
+	# 76: "lrate": 0.0002, "decay": 0.00055
+	# 84: "lrate": 0.0002, "decay": 0.00786
+	# 138: "lrate": 0.00019, "decay": 0.00114
 	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
-	bestlr = [0,0,0,0]
-	bestwd = [1,1,1,1]
+	bestlr = [0.00022,0.0002,0.0002,0.00019]
+	bestwd = [0.00837,0.00055,0.00786,0.00114]
 
 	# SEARCH
 	all_eta_min = [0.0,1e-6,1e-5]
