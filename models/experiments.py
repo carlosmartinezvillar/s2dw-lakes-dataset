@@ -150,6 +150,41 @@ def stage_3():
 		}
 		rows.append(sample)
 
+	# CHECK HIGHER DECAY -- Specially for CNN encoders
+	# all_eta_min = [0.0]
+	all_cycles  = [1,2,3]
+	bestlr = 0.0002
+	cnn_wd = [0.01,0.05,0.1]
+	vit_wd = [0.001,0.005,0.01]
+	first_new_id = len(cross_product) #append to previous
+	cross_product = list(itertools.product(["UNet_CNN_CNN","UNet_CNN_ViT"],all_cycles,cnn_wd))
+	cross_product += list(itertools.product(["UNet_ViT_CNN","UNet_ViT_ViT"],all_cycles,vit_wd))
+
+	for i,(model,cycles,wd) in enumerate(cross_product):
+
+		sample = {
+			'id':i+first_new_id,
+			'model':model,
+			'seed':476,
+			'epochs':65,
+			'scheduler':"cos",
+			'eta_min':0.0,
+			'cycles': cycles,
+			'loss':"ce",
+			'bands':3,
+			'labels':2,
+			'optim':"adamw",
+			'lrate':bestlr,
+			'decay':wd,
+			'batch':16,
+			'vit_layers':1,
+			'mlp_ratio':5,
+			'cnn_layers':2,
+			'channels':32
+		}
+		rows.append(sample)
+
+
 	# write to ./hparams/stage_3.json
 	write_hp_file(name,rows)
 
@@ -167,9 +202,9 @@ def stage_4():
 	# FIXED PARAMETERS
 	name = 'stage_4'
 	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
-	bestlr = [0,0,0,0] #missing
+	bestlr = 0.0002
 	bestwd = [1,1,1,1]
-	best_eta_min = [0,0,0,0]
+	best_eta_min = 0.0
 	best_cycles  = [1,1,1,1]	
 
 	# SEARCH

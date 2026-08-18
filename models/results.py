@@ -550,7 +550,6 @@ def get_best_stage_2(log_dir):
 			print(s2)
 
 
-
 def get_best_stage_3(log_dir):
 	'''
 	Get the best cosine scheduler parameters
@@ -586,15 +585,17 @@ def get_best_stage_3(log_dir):
 		for i in sorted_idxs:
 			a_result    = model_results[i]
 			hparameters = indexed_hp_list[int(a_result['id'])]
-			s = f"id: {a_result['id']} | "
-			s += f"iou: {a_result['iou']} | "
-			s += f"ema: {a_result['ema']} | "
-			s += f"eta_min: {hparameters['eta_min']} | cycles: {hparameters['cycles']}"
+			s = f"id: {a_result['id']:03} | "
+			s += f"iou: {a_result['iou'][0]:.5f} ep {a_result['iou'][1]:02} | "
+			s += f"ema: {a_result['ema'][0]:.5f} ep {a_result['ema'][1]:02} | "
+			s += f"eta_min: {hparameters['eta_min']} | cycles: {hparameters['cycles']} | "
+			s += f"wdecay: {hparameters['decay']}"
 			print(s)
 
-		# plot_training_log() for top 4.
+		# plot_training_log() for best model.
 		best_idx = sorted_idxs[0]
-		plot_training_log(f"{log_dir}/stage_3/epochs_{best_idx:03}.tsv")
+		best_id  = model_results[best_idx]['id']
+		plot_training_log(f"{log_dir}/stage_3/epochs_{best_id:03}.tsv")
 
 
 def get_base_test_results(log_dir):
@@ -746,4 +747,5 @@ if __name__ == '__main__':
 
 	# check_log_dir(log_dir)
 	# get_best_stage_1(log_dir)
-	get_best_stage_2(log_dir)
+	# get_best_stage_2(log_dir)
+	get_best_stage_3(log_dir)
