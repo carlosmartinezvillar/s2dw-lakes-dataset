@@ -203,9 +203,9 @@ def stage_4():
 	name = 'stage_4'
 	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
 	bestlr = 0.0002
-	bestwd = [1,1,1,1]
+	bestwd = [0.008,0.005,0.008,0.01]
 	best_eta_min = 0.0
-	best_cycles  = [1,1,1,1]	
+	best_cycles  = 1	
 
 	# SEARCH
 	cnn_layers = [2,3] # follows vit_layers = [1,2]
@@ -222,16 +222,16 @@ def stage_4():
 		else:
 			vit_layers = 1
 
-		lr = bestlr[models.index(model)]
+		lr = bestlr
 		wd = bestwd[models.index(model)]
-		s_min = best_eta_min[models.index(model)]
-		s_cyc = best_cycles[models.index(model)]
+		s_min = best_eta_min
+		s_cyc = best_cycles
 
 		sample = {
 			'id':i,
 			'model':model,
 			'seed':476,
-			'epochs':65,
+			'epochs':100,
 			'scheduler':"cos",
 			'eta_min': s_min,
 			'cycles': s_cyc,
@@ -314,6 +314,6 @@ if __name__ == '__main__':
 	set_seed(476) #Set seed to fix list of hyperparameters
 	# stage_1()
 	# stage_2()
-	stage_3()
-	# stage_4()
+	# stage_3()
+	stage_4()
 	

@@ -556,6 +556,9 @@ def get_best_stage_3(log_dir):
 	'''
 	with open('./hparams/stage_3.json','r') as fp:
 		hp_list = [json.loads(line) for line in fp.readlines() if line != "\n"]
+
+	# hp_list = hp_list[0:36]
+
 	indexed_hp_list = {row['id']:row for row in hp_list}
 
 	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
@@ -576,8 +579,9 @@ def get_best_stage_3(log_dir):
 
 		# SORT MODEL RESULTS
 		ious = [r['iou'] for r in model_results]
-		# emas = [r['ema'] for r in model_results]
 		sorted_ious = sorted(enumerate(ious),key=lambda x: x[1],reverse=True)
+		# emas = [r['ema'] for r in model_results]
+		# sorted_ious = sorted(enumerate(emas),key=lambda x: x[1],reverse=True)
 		sorted_idxs = [_[0] for _ in sorted_ious]
 
 		print(f"\n{model}")
@@ -585,17 +589,25 @@ def get_best_stage_3(log_dir):
 		for i in sorted_idxs:
 			a_result    = model_results[i]
 			hparameters = indexed_hp_list[int(a_result['id'])]
-			s = f"id: {a_result['id']:03} | "
-			s += f"iou: {a_result['iou'][0]:.5f} ep {a_result['iou'][1]:02} | "
-			s += f"ema: {a_result['ema'][0]:.5f} ep {a_result['ema'][1]:02} | "
-			s += f"eta_min: {hparameters['eta_min']} | cycles: {hparameters['cycles']} | "
-			s += f"wdecay: {hparameters['decay']}"
-			print(s)
+
+			if hparameters['cycles'] == 1 and hparameters['eta_min']==0.0:
+
+				s = f"id: {a_result['id']:03} | "
+				s += f"iou: {a_result['iou'][0]:.5f} (ep {a_result['iou'][1]:02}) | "
+				s += f"ema: {a_result['ema'][0]:.5f} (ep {a_result['ema'][1]:02}) | "
+				s += f"eta_min: {hparameters['eta_min']} | cycles: {hparameters['cycles']} | "
+				s += f"wdecay: {hparameters['decay']}"
+				print(s)
 
 		# plot_training_log() for best model.
-		best_idx = sorted_idxs[0]
-		best_id  = model_results[best_idx]['id']
-		plot_training_log(f"{log_dir}/stage_3/epochs_{best_id:03}.tsv")
+		for i in range(1):
+			best_idx = sorted_idxs[i]
+			best_id  = model_results[best_idx]['id']
+			plot_training_log(f"{log_dir}/stage_3/epochs_{best_id:03}.tsv")
+
+	'''
+	Best are 000,055,018,065
+	'''
 
 
 def get_base_test_results(log_dir):

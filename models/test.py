@@ -213,8 +213,8 @@ if __name__ == '__main__':
 	hp_list_indexed = {row['id']:row for row in HP_LIST}
 
 	checkpoint_path = args.checkpoint
-	model_id = args.checkpoint.split('/')[-1].split('_')[1]
-	start_ep = args.checkpoint.split('/')[-1].split('_')[-1].split('.')[0].lstrip('e')
+	model_id = checkpoint_path.split('/')[-1].split('_')[1]
+	start_ep = checkpoint_path.split('/')[-1].split('_')[-1].split('.')[0].lstrip('e')
 
 	# LOAD HYPERPARAMETERS
 	assert model_id in hp_list_indexed, f"MODEL ID '{model_id}' NOT IN HYPERPARAMETER FILE."
@@ -239,7 +239,7 @@ if __name__ == '__main__':
 		batch_size=batch_size,
 		drop_last=False,
 		shuffle=False,
-		num_workers=4,
+		num_workers=8,
 		pin_memory=True,
 		prefetch_factor=10
 	)
