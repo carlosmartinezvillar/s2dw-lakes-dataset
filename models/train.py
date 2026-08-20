@@ -491,7 +491,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 	mem_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
 	print(f'\nBest validation IoU:    {best_iou:.5f} -- Epoch {best_epoch}')
 	print(f'Best validation EMA(IoU): {best_iou_ema:.5f} -- Epoch {best_epoch_ema}')
-	print(f'Epochs saved: {recent_best.epochs()}') 
+	print(f'Epochs saved: {recent_best_ema.epochs()} (ema) and {recent_best_iou.epochs()} (iou)') 
 	print(f"Peak GPU memory allocated: {mem_gb:.2f} GB")
 
 
