@@ -213,7 +213,7 @@ if __name__ == '__main__':
 	hp_list_indexed = {row['id']:row for row in HP_LIST}
 
 	checkpoint_path = args.checkpoint
-	model_id = checkpoint_path.split('/')[-1].split('_')[1]
+	model_id = int(checkpoint_path.split('/')[-1].split('_')[1])
 	start_ep = checkpoint_path.split('/')[-1].split('_')[-1].split('.')[0].lstrip('e')
 
 	# LOAD HYPERPARAMETERS
