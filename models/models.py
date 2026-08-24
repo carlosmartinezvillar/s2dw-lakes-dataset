@@ -656,13 +656,24 @@ def get_model_parameter_size(model,print_header=False):
 	# COUNT STUFF
 	all_params = sum(p.numel() for p in model.parameters())
 	trainable  = sum(p.numel() for p in model.parameters() if p.requires_grad)
-	named      = {n: sum(p.numel() for p in m.parameters() if p.requires_grad) for n,m in model.named_children()}
+	named      = {n: sum(p.numel() for p in m.parameters()) for n,m in model.named_children()}
 
-	# PRETTY PRINT
-	header = "| MODEL           | PARAMS    | TRAINABLE | ENCODER   | DECODER   |"
-	row = f"| {model.model_name:<15} | {all_params:>9} | {trainable:>9} | "
-	row += f"{named['encoder']:>9} | {named['decoder']:>9} |"
-	if print_header == True:
+	# # PRETTY PRINT
+	# header = "| MODEL           | PARAMS    | TRAINABLE | ENCODER   | DECODER   |"
+	# row = f"| {model.model_name:<15} | {all_params:>9,} | {trainable:>9,} | "
+	# row += f"{named['encoder']:>9,} | {named['decoder']:>9,} |"
+
+	cols = " | ".join(f"{k.upper():>9}" for k in named)
+	header = f"| {'MODEL':<15} | {'PARAMS':>10} | {'TRAINABLE':>9} | {cols} |"
+	row = f"| {model.model_name:<15} | {all_params:>10,} | {trainable:>9,} | "
+	row += " | ".join(f"{v:>9,}" for v in named.values()) + " |"
+
+	accounted = sum(named.values())
+	if accounted != all_params:
+		print(f"WARNING: {model.model_name} missing {all_params - accounted:,} params "
+			f"not in {list(named.keys())}")
+
+	if print_header:
 		print(header)
 		print("-"*len(header))
 	print(row)
@@ -723,7 +734,7 @@ if __name__ == '__main__':
 			get_model_parameter_size(model,i==0)
 			# count_flops(model)
 
-	if cuda.is_available():
+	if torch.cuda.is_available():
 		for j,kwargs in enumerate([tiny,small,base,large]):
 
 			print("\n",sizes[j])
