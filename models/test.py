@@ -6,6 +6,8 @@ import time
 import argparse
 import json
 from functools import wraps
+from PIL import Image
+import sys
 
 import models
 import dataloader
@@ -39,6 +41,8 @@ def parse_args():
 	optional = parser.add_argument_group('Optional arguments')
 	optional.add_argument('--gpu',required=False,type=int,default=0,
 		help='GPU id to train in, if different than 0. Useful to select a gpu in a multi-gpu machine.')
+	optional.add_argument('--save-images',required=False,action='store_true',default=False,
+		help='Save predicted images for a model')
 
 	# LOAD
 	args = parser.parse_args()
@@ -162,6 +166,81 @@ def load_checkpoint(path, model):
     return model,epoch,t_loss,v_loss
 
 
+def adjust_bands(bands,mean,std):
+
+	if bands.shape[0] == 3:
+		mean = mean[0:3]
+		std  = std[0:3]
+
+	# undo normalization in dataloader
+	raw = bands * std.reshape(-1,1,1) + mean.reshape(-1,1,1)
+
+	# contrast?
+	# out = np.empty_like(raw)
+	# for b in range(3):
+		# lo,hi  = np.percentile(raw[b],(2,98))
+		# out[b] = np.clip((raw[b]-lo)/(hi-lo),0,1)*255 if hi > lo else 0
+	# raw = out
+
+	# resize and return
+	raw = np.clip(raw,0,255).astype(np.uint8)
+	return raw.transpose(1,2,0)
+
+
+def colorize_mask(mask,n_classes=2):
+	rgb_array = np.repeat(mask[...,np.newaxis],3,axis=-1) * 255
+	return rgb_array.astype(np.uint8)
+
+
+def save_prediction_images(model,dataloader,n_classes=2,n_images=30):
+
+	img_dir = f"{LOG_DIR}/predicted_{model.model_id:03}"
+	os.makedirs(img_dir,exist_ok=True)
+	saved = 0
+
+	mean = np.array([123.305154,132.731427,131.599954,115.507302]).reshape(-1,1,1)
+	std  = np.array([53.223368,51.529520,53.707588,55.610260]).reshape(-1,1,1)
+
+	model.eval()
+	with torch.no_grad():
+		for i,(X,T) in enumerate(dataloader):
+
+			if saved >= n_images:
+				break
+
+			# TO GPU
+			X = X.to(CUDA_DEV,non_blocking=True)
+			T = T.to(CUDA_DEV,non_blocking=True)
+
+			# FORWARD
+			with torch.autocast(device_type="cuda",dtype=torch.bfloat16,enabled=True):
+				output        = model(X)
+				Y_soft,Y_hard = torch.max(output,1) 	
+
+
+			X_cpu = X.cpu().numpy()
+			T_cpu = T.cpu().numpy()
+			Y_cpu = Y_hard.cpu().numpy()
+
+			for b in range(X_cpu.shape[0]):
+
+				if saved >= n_images:
+					break
+
+				bands = X_cpu[b,:,:,:]
+				label = T_cpu[b]			
+				pred  = Y_cpu[b]
+				bands = adjust_bands(bands,mean,std)
+				label = colorize_mask(label)
+				pred  = colorize_mask(pred)
+
+				Image.fromarray(bands).save(f"{img_dir}/{saved:03}_bands.png")
+				Image.fromarray(label).save(f"{img_dir}/{saved:03}_label.png")
+				Image.fromarray(pred).save(f"{img_dir}/{saved:03}_pred_path.png")
+
+				saved += 1
+
+
 @total_time_decorator
 def test(model,dataloader,n_classes):
 
@@ -243,6 +322,12 @@ if __name__ == '__main__':
 		pin_memory=True,
 		prefetch_factor=10
 	)
+
+
+	if args.save_images:
+		print("Saving prediction masks")
+		save_prediction_images(net,dataloader,n_classes)
+		sys.exit(0)
 
 	# RUN TEST -- 
 	test(net,dataloader,n_classes)
