@@ -121,7 +121,7 @@ def total_time_decorator(orig_func):
 		total_time_start = start_time = time.perf_counter()
 		orig_func(*args,**kwargs)
 		total_time = time.perf_counter() - total_time_start
-		print(f'TOTAL TRAINING TIME: {total_time:.2f}s')
+		print(f'TOTAL TEST TIME: {total_time:.2f}s')
 	return wrapper
 
 
@@ -239,7 +239,7 @@ if __name__ == '__main__':
 		batch_size=batch_size,
 		drop_last=False,
 		shuffle=False,
-		num_workers=8,
+		num_workers=4,
 		pin_memory=True,
 		prefetch_factor=10
 	)
