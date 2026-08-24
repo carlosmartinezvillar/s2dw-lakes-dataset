@@ -185,7 +185,7 @@ def test(model,dataloader,n_classes):
 			T = T.to(CUDA_DEV,non_blocking=True)
 
 			# FORWARD
-			with torch.autocast(device_type="cuda",dtype=torch.float16,enabled=True):
+			with torch.autocast(device_type="cuda",dtype=torch.bfloat16,enabled=True):
 				output        = model(X)
 				Y_soft,Y_hard = torch.max(output,1) 		
 
@@ -216,6 +216,8 @@ if __name__ == '__main__':
 	model_id = int(checkpoint_path.split('/')[-1].split('_')[1])
 	start_ep = checkpoint_path.split('/')[-1].split('_')[-1].split('.')[0].lstrip('e')
 
+	print(f"Loading checkpoint: {checkpoint_path}")
+
 	# LOAD HYPERPARAMETERS
 	assert model_id in hp_list_indexed, f"MODEL ID '{model_id}' NOT IN HYPERPARAMETER FILE."
 	HP = hp_list_indexed[model_id]
@@ -224,6 +226,8 @@ if __name__ == '__main__':
 	batch_size      = HP['batch']
 	model_class_str = HP['model']
 	# model_id        = HP['id']
+
+	print(f"Hyperparameters:\n\n{HP}")
 
 	# LOAD CHECKPOINT WEIGHTS
 	# checkpoint_path = f"{MODEL_DIR}/best_{model_id:03}_e{epoch:02}.pth.tar"
