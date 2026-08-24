@@ -236,7 +236,7 @@ def save_prediction_images(model,dataloader,n_classes=2,n_images=30):
 
 				Image.fromarray(bands).save(f"{img_dir}/{saved:03}_bands.png")
 				Image.fromarray(label).save(f"{img_dir}/{saved:03}_label.png")
-				Image.fromarray(pred).save(f"{img_dir}/{saved:03}_pred_path.png")
+				Image.fromarray(pred).save(f"{img_dir}/{saved:03}_preds.png")
 
 				saved += 1
 
