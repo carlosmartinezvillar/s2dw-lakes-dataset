@@ -102,17 +102,12 @@ def calculate_metrics(confmat):
 def update_confusion_matrix(confmat,T,Y,n_classes):
 	'''
 	Update a confusion matrix tensor in gpu. Per-pixel classification.
-	For 2 classes, for example, the order is set as:
-
-	# confmat[0,0] += ((T==0) & (Y==0)).sum() #True-negative
-	# confmat[0,1] += ((T==0) & (Y==1)).sum() #False-positive
-	# confmat[1,0] += ((T==1) & (Y==0)).sum() #False-negative
-	# confmat[1,1] += ((T==1) & (Y==1)).sum() #True-positive
 	'''
-	for k in range(n_classes*n_classes):
-		i = k // n_classes #row
-		j = k % n_classes #col
-		confmat[i,j] += ((T==i) & (Y==j)).sum()
+	# Vectorized
+	# [0,1,2,3] = [TN,FP,FN,TP]
+	idx = (T.flatten()*n_classes + Y.flatten()).to(torch.int64)
+	binc = torch.bincount(idx,minlength=n_classes*n_classes)
+	confmat += binc.view(n_classes,n_classes)
 
 
 def total_time_decorator(orig_func):
@@ -191,7 +186,7 @@ def test(model,dataloader,n_classes):
 
 			# APPEND COUNTS
 			sample_sum += X.size(0)
-			update_confusion_matrix(gpu_mat,T,Y_hard)
+			update_confusion_matrix(gpu_mat,T,Y_hard,n_classes)
 
 	# GET METRICS OVER ENTIRE SET
 	cpu_mat = gpu_mat.cpu() #syncs gpu-cpu
