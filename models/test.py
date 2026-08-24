@@ -232,7 +232,8 @@ if __name__ == '__main__':
 	# LOAD CHECKPOINT WEIGHTS
 	# checkpoint_path = f"{MODEL_DIR}/best_{model_id:03}_e{epoch:02}.pth.tar"
 	model = getattr(models,model_class_str)
-	net   = model(model_id,n_bands,n_classes)
+	net = model(HP['id'],HP['bands'],HP['labels'],HP['cnn_layers'],HP['vit_layers'],HP['channels'],HP['mlp_ratio'])	
+	# net   = model(model_id,n_bands,n_classes)
 	net,_,_,_ = load_checkpoint(checkpoint_path,net)
 	net = net.to(CUDA_DEV)
 
