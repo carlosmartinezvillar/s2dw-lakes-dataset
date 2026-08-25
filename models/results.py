@@ -315,8 +315,8 @@ def read_test_file(log_path):
 		lines = fp.readlines()
 
 	# READ TEST RESULTS
-	header = lines[0]
-	result = lines[1].rstrip('\n')
+	header = lines[0].rstrip('\n').split('\t')
+	result = lines[1].rstrip('\n').split('\t')
 	test_iou = result[header.index('_iou1')]
 	test_ppv = result[header.index('_ppv1')]
 	test_tpr = result[header.index('_tpr1')]
@@ -655,11 +655,17 @@ def get_best_stage_4(log_dir):
 	# --------------------------------------------------
 	# VALIDATION RESULTS
 	# --------------------------------------------------
+	print('\n')
+	print('='*80)
+	print("TRAINING/VALIDATION -- STAGE 4")
+	print('='*80)
+
+
 	# GROUP BY MODEL TO ENSURE SORTING
 	grouped_results = {k:[] for k in models}
 	for model,experiments in grouped_ids.items():
 		for e in experiments:
-			log_file = f"{log_dir}/stage_4/epochs_{experiment:03}.tsv" # <--- fails if no log
+			log_file = f"{log_dir}/stage_4/epochs_{e:03}.tsv" # <--- fails if no log
 			result   = get_model_best_epoch(log_file)
 			grouped_results[model].append(result)
 
@@ -699,7 +705,12 @@ def get_best_stage_4(log_dir):
 	# --------------------------------------------------
 	# TEST RESULTS
 	# --------------------------------------------------
-	for model, experiments in group_ids.items():
+	print('\n')
+	print('='*80)
+	print("TEST RESULTS")
+	print('='*80)
+
+	for model, experiments in grouped_ids.items():
 
 		# PRINT GROUPED
 		print(f"\n{model}")
@@ -728,14 +739,32 @@ def get_best_stage_4(log_dir):
 					size = "Small"
 
 			#PRINT
-			s = f"id: {e} | {size} | {test_iou} | {test_precision} | {test_recall} "
+			s = f"id: {e:03} | {size} | IoU: {test_iou} | prec: {test_ppv} | recall: {test_tpr} "
 			print(s)
 
 
-def get_best_stage_5():
+def get_best_stage_5(log_dir):
 	'''
-	Evaluate the training performance of ViT2 (patch embedding).
+	Evaluate ViT2 (patch embedding) and CNN2 (depthwise-separable conv).
 	'''
+	with open('./hparams/stage_5.json','r') as fp:
+		hp_list = [json.loads(line) for line in fp.readlines() if line != "\n"]
+	indexed_hp_list = {row['id']:row for row in hp_list}
+	
+	models = ["UNet_ViT2_CNN","UNet_ViT2_ViT","UNet_CNN2_CNN","UNet_CNN2_ViT"]
+
+	# 4 EXPERIMENTS/RUN PER MODEL KIND
+	grouped_ids = {k:[] for k in models}
+	for row in hp_list:
+		grouped_ids[row['model']].append(row['id'])
+
+	# --------------------------------------------------
+	# VALIDATION RESULTS
+	# --------------------------------------------------
+
+	# --------------------------------------------------
+	# TEST RESULTS
+	# --------------------------------------------------
 	pass
 
 
@@ -756,8 +785,7 @@ def parse_args():
 if __name__ == '__main__':
 	args = parse_args()
 	log_dir = args.log_dir.rstrip('/')
-
-	# check_log_dir(log_dir)
 	# get_best_stage_1(log_dir)
 	# get_best_stage_2(log_dir)
-	get_best_stage_3(log_dir)
+	# get_best_stage_3(log_dir)
+	get_best_stage_4(log_dir) #final models + test results

@@ -192,6 +192,24 @@ def colorize_mask(mask,n_classes=2):
 	return rgb_array.astype(np.uint8)
 
 
+def colorize_errors(label,pred):
+	'''
+	False Positive: red
+	False Negative: blue
+	'''
+	h,w = label.shape
+	rgb = np.zeros((h,w,3),dtype=np.uint8)
+	tp = (label==1) & (pred==label)
+	fp = (label==0) & (pred==1)
+	fn = (label!=0) & (pred==0)
+
+	rgb[tp] = (255,255,255)
+	rgb[fp] = (255,0,0)
+	rgb[fn] = (0,0,255)
+
+	return rgb
+
+
 def save_prediction_images(model,dataloader,n_classes=2,n_images=30):
 
 	img_dir = f"{LOG_DIR}/predicted_{model.model_id:03}"

@@ -1,18 +1,22 @@
 '''
-Several plots and figures.
+Several plots/figures describing the dataset.
 '''
 import matplotlib.pyplot as plt
 import numpy as np
 import geopandas as gpd
+import pandas as pd
 import rasterio as rio
 import os
 from PIL import Image
-import glob
+from glob import glob
 import math
 import argparse
+from datetime import datetime
+from shapely import wkt
 
-# HARD-CODED US STATE POLYGONS SOURCE -- CHANGE TO USE (see plot_tile_polygons() arguments)
-STATE_SHP = "../"
+# HARD-CODED US STATE POLYGONS SOURCE
+STATE_SHP = "../cb_2024_us_state_500k/cb_2024_us_state_500k.shp"
+PLOT_CRS  = "EPSG:5070"
 
 # DYNAMICWORLD COLORS & LABELS
 dw_colors = {
@@ -57,7 +61,7 @@ def filter_tiles(geo_df,drop):
 	pass
 
 
-def plot_tile_polygons(us_geom):
+def plot_tile_polygons():
 	'''
 	Plot a combined set of polygons for AOI and MGRS tiles.
 
@@ -66,39 +70,211 @@ def plot_tile_polygons(us_geom):
 	us_geom: str
 		path to a .shp file for US state geometries.
 	'''
+	# ---------------------------------------------------------------------------
+	# 1. LOAD FILES
+	# ---------------------------------------------------------------------------	
+	# LOAD US GEOM
+	states      = gpd.read_file(STATE_SHP)
+	territories = ['PR','AS','VI','MP','GU','AK','HI']
+	contiguous  = states[~states['STUSPS'].isin(territories)]
+
 	# TILES IN DATASET
 	tile_geometries_file = "./search/search_results_geometries.tsv"
+	with open(tile_geometries_file,'r') as fp:
+		lines = fp.readlines()
+	safe_ids  = [l.split('\t')[0] for l in lines]
+	tile_geom = [l.split('\t')[1].split(';')[1].rstrip("'") for l in lines]
+
+	# ---------------------------------------------------------------------------
+	# 2. EXTRACT MGRS TILE ID/SEPARATE DROPPED
+	# ---------------------------------------------------------------------------
+	mgrs = [s.split("_")[5] for s in safe_ids]
+	unique_mgrs,unique_mgrs_idx = np.unique(mgrs,return_index=True)
+	unique_tile_geom = np.array(tile_geom)[unique_mgrs_idx]
 
 	dropped_tiles = ["T11SKD","T11TKE"]
 
-	#LOAD AS GEODATAFRAME
+	bad_mask = np.isin(unique_mgrs,dropped_tiles)
+	bad_mgrs      = unique_mgrs[bad_mask]
+	bad_tile_geom = unique_tile_geom[bad_mask]
+	good_mgrs      = unique_mgrs[~bad_mask]
+	good_tile_geom = unique_tile_geom[~bad_mask]
 
-	#SINGLE ENTRIES PER TILE
+	# ---------------------------------------------------------------------------
+	# 3. PARSE WKT GEOMETRIES
+	#    Raw format: geography'SRID=4326;POLYGON ((...))' — strip the prefix.
+	# ---------------------------------------------------------------------------
+	good_tile_wkts = [wkt.loads(s) for s in good_tile_geom]
+	tile_df = pd.DataFrame({"tile": good_mgrs})
+	tile_gdf = gpd.GeoDataFrame(
+	    tile_df,
+	    geometry=good_tile_wkts,
+	    crs="EPSG:4326"
+	)
 
-	#PLOT
-	pass
+	bad_tile_wkts = [wkt.loads(s) for s in bad_tile_geom]
+	bad_tile_df   = pd.DataFrame({"tile": bad_mgrs})
+	bad_tile_gdf  = gpd.GeoDataFrame(
+	    bad_tile_df,
+	    geometry=bad_tile_wkts,
+	    crs="EPSG:4326"
+	)
+
+	# ---------------------------------------------------------------------------
+	# 4. PROJECT TO COMMON CRS
+	# ---------------------------------------------------------------------------
+	contiguous    = contiguous.to_crs(PLOT_CRS)
+	tile_gdf      = tile_gdf.to_crs(PLOT_CRS)
+	bad_tile_gdf  = bad_tile_gdf.to_crs(PLOT_CRS)
+
+	# ---------------------------------------------------------------------------
+	# 5. PLOT
+	# ---------------------------------------------------------------------------
+	fig, ax = plt.subplots(1,1,figsize=(12,12))
+
+	contiguous.plot(ax=ax,color='white',alpha=1.0,edgecolor='black',linewidth=0.25)
+	tile_gdf.plot(ax=ax,color='blue',alpha=0.2,edgecolor='blue',linewidth=1.0)
+	bad_tile_gdf.plot(ax=ax,color='red',alpha=0.1,edgecolor='red',linewidth=1.0)
+
+	# zoom in
+	xmin, ymin, xmax, ymax = contiguous.total_bounds
+	# print(f"X:{xmin}--{xmax} | Y: {ymin}--{ymax}")
+	x_range = xmax - xmin
+	y_range = ymax - ymin
+	xmax = x_range*0.3 + xmin
+	ymax = y_range*0.85 + ymin	
+	ymin = y_range*0.25 + ymin
 
 
-def plot_data_split_polygons(us_geom):
+	ax.set_xlim(xmin,xmax)
+	ax.set_ylim(ymin,ymax)
+
+	# title, layout, etc
+	# ax.set_title("Sentinel-2 Tiles",fontsize=24)
+	ax.set_axis_off()
+	plt.tight_layout()
+	plt.savefig("./figures/tiles.png")
+
+
+def plot_tile_polygons_with_split():
 
 	# with open('./split.txt','r') as fp:
 	# 	lines = fp.readlines()
 	# ...etc etc
 
-	te_tiles = ['11SQV', '10TEL', '10SFG']
-	va_tiles = ['10TFK' '11SLC' '10SEH']
-	tr_tiles = ['10TFL', '12TVK', '11SQA', '10SEJ', '10SGJ', '11SPS', '12TXL', '12TUL', '10TFM', '11SQU', '12TVM', '10TGK', '12SVG']
-
+	te_tiles = ['T11SQV', 'T10TEL', 'T10SFG']
+	va_tiles = ['T10TFK', 'T11SLC', 'T10SEH']
+	tr_tiles = ['T10TFL', 'T12TVK', 'T11SQA', 'T10SEJ', 'T10SGJ', 'T11SPS', 'T12TXL', 'T12TUL', 'T10TFM', 'T11SQU', 'T12TVM', 'T10TGK', 'T12SVG']
 	tile_geometries_file = "./search/search_results_geometries.tsv"
 
+	# ---------------------------------------------------------------------------
+	# 1. LOAD FILES
+	# ---------------------------------------------------------------------------	
+	# LOAD US GEOM
+	states      = gpd.read_file(STATE_SHP)
+	territories = ['PR','AS','VI','MP','GU','AK','HI']
+	contiguous  = states[~states['STUSPS'].isin(territories)]
 
+	# TILES IN DATASET
+	tile_geometries_file = "./search/search_results_geometries.tsv"
+	with open(tile_geometries_file,'r') as fp:
+		lines = fp.readlines()
+	safe_ids  = [l.split('\t')[0] for l in lines]
+	tile_geom = [l.split('\t')[1].split(';')[1].rstrip("'") for l in lines]
 
-	pass
+	# ---------------------------------------------------------------------------
+	# 2. EXTRACT MGRS TILE ID/SEPARATE DROPPED
+	# ---------------------------------------------------------------------------
+	mgrs = [s.split("_")[5] for s in safe_ids]
+	unique_mgrs,unique_mgrs_idx = np.unique(mgrs,return_index=True)
+	unique_tile_geom = np.array(tile_geom)[unique_mgrs_idx]
+
+	dropped_tiles = ["T11SKD","T11TKE"]
+
+	bad_mask = np.isin(unique_mgrs,dropped_tiles)
+	bad_mgrs      = unique_mgrs[bad_mask]
+	bad_tile_geom = unique_tile_geom[bad_mask]
+	good_mgrs      = unique_mgrs[~bad_mask]
+	good_tile_geom = unique_tile_geom[~bad_mask]
+
+	te_mask = np.isin(good_mgrs,te_tiles)
+	va_mask = np.isin(good_mgrs,va_tiles)
+	tr_mask = np.isin(good_mgrs,tr_tiles)
+
+	te_mgrs = good_mgrs[te_mask]
+	va_mgrs = good_mgrs[va_mask]
+	tr_mgrs = good_mgrs[tr_mask]
+	te_geom = good_tile_geom[te_mask]
+	va_geom = good_tile_geom[va_mask]
+	tr_geom = good_tile_geom[tr_mask]
+
+	# ---------------------------------------------------------------------------
+	# 3. PARSE WKT GEOMETRIES
+	# ---------------------------------------------------------------------------
+	te_wkts = [wkt.loads(s) for s in te_geom]
+	te_df = pd.DataFrame({"tile": te_mgrs})
+	te_gdf = gpd.GeoDataFrame(
+	    te_df,
+	    geometry=te_wkts,
+	    crs="EPSG:4326"
+	)
+
+	va_wkts = [wkt.loads(s) for s in va_geom]
+	va_df = pd.DataFrame({"tile": va_mgrs})
+	va_gdf = gpd.GeoDataFrame(
+	    va_df,
+	    geometry=va_wkts,
+	    crs="EPSG:4326"
+	)
+
+	tr_wkts = [wkt.loads(s) for s in tr_geom]
+	tr_df = pd.DataFrame({"tile": tr_mgrs})
+	tr_gdf = gpd.GeoDataFrame(
+	    tr_df,
+	    geometry=tr_wkts,
+	    crs="EPSG:4326"
+	)
+
+	# ---------------------------------------------------------------------------
+	# 4. PROJECT TO COMMON CRS
+	# ---------------------------------------------------------------------------
+	contiguous    = contiguous.to_crs(PLOT_CRS)
+	te_gdf      = te_gdf.to_crs(PLOT_CRS)
+	va_gdf      = va_gdf.to_crs(PLOT_CRS)
+	tr_gdf      = tr_gdf.to_crs(PLOT_CRS)
+
+	# ---------------------------------------------------------------------------
+	# 5. PLOT
+	# ---------------------------------------------------------------------------
+	fig, ax = plt.subplots(1,1,figsize=(12,12))
+
+	contiguous.plot(ax=ax,color='white',alpha=1.0,edgecolor='black',linewidth=0.25)
+	te_gdf.plot(ax=ax,color='blue',alpha=0.2,edgecolor='blue',linewidth=1.0)
+	va_gdf.plot(ax=ax,color='red',alpha=0.2,edgecolor='red',linewidth=1.0)
+	tr_gdf.plot(ax=ax,color='green',alpha=0.2,edgecolor='red',linewidth=1.0)
+
+	# zoom in
+	xmin, ymin, xmax, ymax = contiguous.total_bounds
+	# print(f"X:{xmin}--{xmax} | Y: {ymin}--{ymax}")
+	x_range = xmax - xmin
+	y_range = ymax - ymin
+	xmax = x_range*0.3 + xmin
+	ymax = y_range*0.85 + ymin	
+	ymin = y_range*0.25 + ymin
+	ax.set_xlim(xmin,xmax)
+	ax.set_ylim(ymin,ymax)
+
+	# title, layout, etc
+	# ax.set_title("Sentinel-2 Tiles",fontsize=24)
+	ax.set_axis_off()
+	plt.tight_layout()
+	plt.savefig("./figures/tiles_split.png")
+
 
 ################################################################################
 # ENTIRE TILE RASTERS
 ################################################################################
-def plot_tile_bands(band_folder):
+def plot_s2(band_folder):
 	'''
 	Plot an RGB image.
 	'''
@@ -153,7 +329,7 @@ def plot_tile_bands(band_folder):
 	print(f"file written to {out_path}")
 
 
-def plot_tile_label(img_path):
+def plot_dw(img_path):
 	'''
 	Plot a DynamicWorld V1 image.
 	'''
@@ -190,7 +366,7 @@ def plot_tile_label(img_path):
 	print(f"file written to {out_path}")
 
 
-def plot_tile_label_original(img_path):
+def plot_dw_original(img_path):
 	'''
 	Plot a DynamicWorld V1 image. All 8 original classes.
 	'''
@@ -333,11 +509,11 @@ def get_windows(borders):
 	return windows
 
 	
-def plot_tile_bands_windows(img_path):
+def plot_bands_windows(img_path):
 	pass
 
 
-def plot_tile_label_windows(s2_img_path,dw_img_path,chip_size=256,stride=256):
+def plot_label_windows(s2_img_path,dw_img_path,chip_size=256,stride=256):
 
 	assert os.path.isfile(dw_img_path), f"No file in {dw_img_path}"
 	assert os.path.isfile(s2_img_path), f"No file in {s2_img_path}"
@@ -444,8 +620,8 @@ def plot_chip_bands(chip_path):
 	false_ir = Image.merge(mode='RGB',bands=[nir,r,g])
 
 	#PATHS
-	rgb_path      = f"./figures/{chip_path.split('/')[-1].replace('.tif','_rgb_.tif')}"
-	false_ir_path = f"./figures/{chip_path.split('/')[-1].replace('.tif','_nir_.tif')}"
+	rgb_path      = f"./figures/{chip_path.split('/')[-1].replace('.tif','_rgb.tif')}"
+	false_ir_path = f"./figures/{chip_path.split('/')[-1].replace('.tif','_nir.tif')}"
 
 	# SAVE
 	rgb.save(rgb_path)
@@ -458,12 +634,17 @@ def plot_chip_bands(chip_path):
 
 def plot_chip_label(chip_path):
 	'''
-	Don't need for 2-class.
+	Copy label in dataset to same directory.
 	'''
-	pass
+
+	lbl_path = chip_path.replace("_B0X.tif","_LBL.tif")
+	img      = Image.open(lbl_path)
+	out_path = f"./figures/{lbl_path.split('/')[-1]}"
+	img.save(out_path)
+	print(f"File saved to {out_path}.")
 
 
-def plot_chip(chip_path):
+def plot_chip_panel(chip_path):
 	'''
 	Single figure. Plot RGB, false-color, and label side by side.
 	'''
@@ -479,18 +660,18 @@ def plot_chip(chip_path):
 
 	# SET OUT PATH
 	chip_id  = chip_path.split('/')[-1].split("_B0X.tif")[0]
-	out_path = f"./figures/{chip_id}_ALL.png"
+	out_path = f"./figures/{chip_id}_panel.png"
 
 	# PLOT
 	fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 	axes[0].imshow(rgb)
-	axes[0].set_title("RGB Bands")
+	# axes[0].set_title("RGB Bands")
 	axes[0].axis("off")
 	axes[1].imshow(false_ir)
-	axes[1].set_title("False-color IR")
+	# axes[1].set_title("False-color IR")
 	axes[1].axis("off")
-	axes[2].imshow(label)
-	axes[2].set_title("Label")
+	axes[2].imshow(label,cmap='gray')
+	# axes[2].set_title("Label")
 	axes[2].axis("off")
 	plt.tight_layout()
 	plt.savefig(out_path, bbox_inches="tight", dpi=300)
@@ -574,16 +755,19 @@ def plot_chips_per_raster(chip_dir):
 
 	# PLOT
 	plt.figure(figsize=fig_size_normal)
-	plt.hist(chips_per_raster,histtype='bar',bins=50)
-	plt.title(f"n_rasters = {len(rasters)}")
-	plt.ylabel("Count")
-	plt.xlabel("Chips per Raster") #this is correct
+	plt.hist(chips_per_raster,histtype='bar',bins=100)
+	plt.title(f"Distribution of Chips Produced by Each Raster (N={len(rasters)})")
+	# plt.ylabel("Count")
+	plt.xlabel("Chips") #this is correct
 	plt.tight_layout()
 	plt.savefig('./figures/chips_per_raster.png',dpi=300)
 	plt.close()
 
 
 def plot_chips_per_tile(chip_dir):
+	'''
+	Bar plot. Count of chips in each of the 21 tiles.
+	'''
 
 	# CHECK DIR
 	assert os.path.isdir(chip_dir), f"No chip file found in path {chip_dir}"
@@ -604,7 +788,7 @@ def plot_chips_per_tile(chip_dir):
 	# PLOT
 	plt.figure(figsize=fig_size_wide)
 	plt.bar(tiles,chips_per_tile,color='C0')
-	plt.ylabel("# of Chips")
+	plt.ylabel("Chips")
 	plt.xlabel("Tile")
 	plt.xticks(tiles,rotation=90)	
 	plt.tight_layout()
@@ -613,6 +797,9 @@ def plot_chips_per_tile(chip_dir):
 
 
 def plot_chips_per_month(chip_dir):
+	'''
+	Bar plot.
+	'''
 
 	# CHECK DIR
 	assert os.path.isdir(chip_dir), f"No chip file found in path {chip_dir}"
@@ -635,7 +822,7 @@ def plot_chips_per_month(chip_dir):
 	month_ticks = [datetime.strptime(_,"%Y%m").strftime("%b-'%y") for _ in months]
 	plt.figure(figsize=fig_size_normal)
 	plt.bar(month_ticks,chips_per_month,color='C0')
-	plt.ylabel("# of Chips")
+	plt.ylabel("Chips")
 	plt.xlabel("Month")
 	plt.xticks(rotation=90)		
 	plt.tight_layout()
@@ -644,6 +831,9 @@ def plot_chips_per_month(chip_dir):
 
 
 def plot_chips_per_week(chip_dir):
+	'''
+	Bar plot. Count of chips per week, for 52 weeks of year 2025.
+	'''
 
 	# CHECK DIR
 	assert os.path.isdir(chip_dir), f"No chip file found in path {chip_dir}"
@@ -665,7 +855,7 @@ def plot_chips_per_week(chip_dir):
 	# PLOT
 	plt.figure(figsize=fig_size_wide)
 	plt.bar(weeks,chips_per_week,color='C0')
-	plt.ylabel("# of Chips")
+	plt.ylabel("Chips")
 	plt.xlabel("Week")
 	plt.xticks(rotation=90)		
 	plt.tight_layout()
@@ -673,50 +863,157 @@ def plot_chips_per_week(chip_dir):
 	plt.close()
 
 
-def plot_rasters_per_week(data_dir):
+def plot_rasters_per_week(chip_dir):
 	'''
 	Bar plot.
 	'''
 	# CHECK DIR
-	assert os.path.isdir(data_dir), f"No data directory in {data_dir}"
+	assert os.path.isdir(chip_dir), f"No data directory in {chip_dir}"
 
-	# GET .SAFE IDs
+	# LIST DIR
+	chips_tr = glob("*_B0X.tif",root_dir=f"{chip_dir}/training")
+	chips_va = glob("*_B0X.tif",root_dir=f"{chip_dir}/validation")
+	chips_te = glob("*_B0X.tif",root_dir=f"{chip_dir}/testing")
+	chips    = chips_tr + chips_va + chips_te
+	chip_rasters = [_[0:-19] for _ in chips]
+	
+	# FIND UNIQUE RASTER NAMES
+	rasters,chips_per_raster = np.unique(chip_rasters,return_counts=True)
 
 	# GET DATES, EXTRACT WEEK
+	raster_dates     = [_[0:8] for _ in rasters]
+	raster_dates_obj = [datetime.strptime(_,"%Y%m%d") for _ in raster_dates]
+	raster_weeks     = [f"{_.isocalendar().year}-{_.isocalendar().week:02}" for _ in raster_dates_obj]
 
 	# GET UNIQUE WEEKS
+	weeks,rasters_per_week = np.unique(raster_weeks,return_counts=True)	
 
 	# PLOT
-	pass
+	plt.figure(figsize=fig_size_wide)
+	plt.bar(weeks,rasters_per_week,color='C0')
+	plt.ylabel("Rasters")
+	plt.xlabel("Week")
+	plt.xticks(rotation=90)		
+	plt.tight_layout()
+	plt.savefig("./figures/rasters_per_week.png",dpi=300)
+	plt.close()
 
 
-def plot_rasters_per_tile(data_dir):
+def plot_rasters_per_tile(chip_dir):
 	'''
 	Bar plot.
 	'''
 	# CHECK DIR
-	assert os.path.isdir(data_dir), f"No data directory in {data_dir}"
+	assert os.path.isdir(chip_dir), f"No data directory in {chip_dir}"
 
-	# GET .SAFE IDs
+	# LIST DIR
+	chips_tr = glob("*_B0X.tif",root_dir=f"{chip_dir}/training")
+	chips_va = glob("*_B0X.tif",root_dir=f"{chip_dir}/validation")
+	chips_te = glob("*_B0X.tif",root_dir=f"{chip_dir}/testing")
+	chips    = chips_tr + chips_va + chips_te
+
+	# FIND UNIQUE RASTER NAMES
+	rasters = [_[0:-19] for _ in chips]
+	unique_rasters,chips_per_raster = np.unique(rasters,return_counts=True)
 
 	# GET TILES
+	tiles = [_[-6:] for _ in unique_rasters]		
 
 	# GET UNIQUE TILES AND COUNT
+	unique_tiles, rasters_per_tile = np.unique(tiles,return_counts=True) 
 
 	# PLOT
+	plt.figure(figsize=fig_size_wide)
+	plt.bar(unique_tiles,rasters_per_tile,color='C0')
+	plt.ylabel("Raster")
+	plt.xlabel("Tiles")
+	plt.xticks(rotation=90)		
+	plt.tight_layout()
+	plt.savefig("./figures/rasters_per_tile.png",dpi=300)
+	plt.close()
 
-	pass
 
+def plot_chips_per_window(chip_dir):
+	'''
+	Histogram and average. Count of chips produced by each window.
+	'''
+	# CHECK DIR
+	assert os.path.isdir(chip_dir), f"No data directory in {chip_dir}"
+
+	# LIST DIR
+	chips_tr = glob("*_B0X.tif",root_dir=f"{chip_dir}/training")
+	chips_va = glob("*_B0X.tif",root_dir=f"{chip_dir}/validation")
+	chips_te = glob("*_B0X.tif",root_dir=f"{chip_dir}/testing")
+	chips    = chips_tr + chips_va + chips_te
+
+
+	windows = ['_'.join([_[32:38],_[-13:-8]]) for _ in chips]
+	unique_windows,chips_per_window = np.unique(windows,return_counts=True)
+
+	print(f"Mean chips per window: {chips_per_window.mean()}")
+
+	# PLOT
+	plt.figure(figsize=fig_size_normal)
+	plt.hist(chips_per_window,histtype='bar',bins=50)
+	plt.title(f"Distribution of Chips Produced by Each Window (N={len(unique_windows)})")
+	# plt.ylabel("Count")
+	plt.xlabel("Chips")
+	plt.tight_layout()
+	plt.savefig('./figures/chips_per_window.png',dpi=300)
+	plt.close()
+
+
+def plot_window_intervals(chip_dir):
+	'''
+	Histogram. Average revisit (distance between dates in days) of each window.
+	'''
+	# CHECK DIR
+	assert os.path.isdir(chip_dir), f"No data directory in {chip_dir}"
+
+	# LIST DIR
+	chips_tr = glob("*_B0X.tif",root_dir=f"{chip_dir}/training")
+	chips_va = glob("*_B0X.tif",root_dir=f"{chip_dir}/validation")
+	chips_te = glob("*_B0X.tif",root_dir=f"{chip_dir}/testing")
+	chips    = chips_tr + chips_va + chips_te
+
+	# ARRAYS
+	windows = np.array(['_'.join([_[32:38],_[-13:-8]]) for _ in chips])
+	dates   = np.array([_[0:8] for _ in chips])
+	unique_windows = np.unique(windows)
+
+	# CALCULATE REVISIT TIMES PER WINDOW
+	all_revisit_times = []
+	for w in unique_windows:
+		window_dates = dates[windows == w]
+		dates_obj    = sorted([datetime.strptime(_,"%Y%m%d") for _ in window_dates])
+		# day_of_year  = [int(_.strftime("%j")) for _ in dates_obj]
+		revisit_time = [(dates_obj[i] - dates_obj[i-1]).days for i in range(1,len(dates_obj))]
+		all_revisit_times += revisit_time
+
+
+	mean_revisit = np.array(all_revisit_times).mean()
+	print(f"Mean window revisit time: {mean_revisit}")
+
+	# PLOT
+	plt.figure(figsize=fig_size_normal)
+	plt.hist(all_revisit_times,histtype='bar',bins=100)
+	plt.title(f"Revisit Times per Individual Chip Location")
+	# plt.ylabel("Count")
+	plt.xlabel("Revisit time (in days)")
+	plt.tight_layout()
+	plt.savefig('./figures/window_revisit.png',dpi=300)
+	plt.close()
 
 def parse_args():
 	parser = argparse.ArgumentParser()
-	parser.add_argument('--chip-dir',required=False,default=None,help='Dataset (chip) directory.')
+	parser.add_argument('--chip-dir',required=True,default=None,help='Dataset (chip) directory.')
 	args = parser.parse_args()
 
-	if args.chip_dir is not None:
-		assert os.path.isdir(args.chip_dir), f"Chip dir {args.chip_dir} not found."
-		if args.chip_dir[-1] == '/':
-			args.chip_dir = args.chip_dir[:-1]
+	# if args.chip_dir is not None:
+	assert os.path.isdir(args.chip_dir), f"Chip dir {args.chip_dir} not found."
+		# if args.chip_dir[-1] == '/':
+			# args.chip_dir = args.chip_dir[:-1]
+	args.chip_dir = args.chip_dir.rstrip('/')
 
 	return args
 
@@ -727,18 +1024,31 @@ if __name__ == '__main__':
 
 	args = parse_args()
 
-	sample_dw_tile = "20250627T184941_20250627T185915_T10SEJ.tif"
-	# dw_tile_path = f"/Users/ci/Desktop/{sample_dw_tile}"
+	# sample_dw_tile = "20250627T184941_20250627T185915_T10SEJ.tif"
+	# dw_tile_path = f"../{sample_dw_tile}"
 	# plot_tile_label(dw_tile_path)
 	# plot_tile_label_original(dw_tile_path)
 
-	sample_chip = "20250108T185751_20250108T185745_T10SEH_R113_25_17_B0X.tif"
-	if args.chip_dir is not None:
-		chip_path = f"{args.chip_dir}/{sample_chip}"
-		plot_chip(chip_path)
-		plot_chip_band_histogram(chip_path)
+	# POLYGONS/GEOGRAPHICAL DISTRIBUTION OF TILES
+	if os.path.isfile(STATE_SHP):
+		plot_tile_polygons()
+		plot_tile_polygons_with_split()
 
-	plot_tile_polygons() #<<< --- missing
-	plot_data_split_polygons() # <<-- 
+	# ONE CHIP
+	chips_va = glob("*_B0X.tif",root_dir=f"{args.chip_dir}/validation")
+	sample_chip = f"validation/{chips_va[0]}"
+	chip_path = f"{args.chip_dir}/{sample_chip}"
+	plot_chip_panel(chip_path)
+	plot_chip_bands(chip_path)
+	plot_chip_label(chip_path)
+	plot_chip_band_histogram(chip_path)
 
-	pass
+	# DATASET PLOTS
+	plot_chips_per_raster(args.chip_dir)
+	plot_chips_per_tile(args.chip_dir)
+	plot_chips_per_month(args.chip_dir)	
+	plot_chips_per_week(args.chip_dir)
+	plot_rasters_per_week(args.chip_dir)
+	plot_rasters_per_tile(args.chip_dir)
+	plot_chips_per_window(args.chip_dir)
+	plot_window_intervals(args.chip_dir)

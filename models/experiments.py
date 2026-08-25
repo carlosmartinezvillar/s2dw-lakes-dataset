@@ -259,7 +259,7 @@ def stage_5():
 
 	# FIXED PARAMETERS
 	name = 'stage_5'
-	bestlr = [0,0,0,0] #missing
+	bestlr = 0.0002
 	bestwd = [1,1,1,1]
 	best_eta_min = [0,0,0,0]
 	best_cycles  = [1,1,1,1]
