@@ -743,6 +743,44 @@ def get_best_stage_4(log_dir):
 			print(s)
 
 
+def plot_parameters_iou():
+
+	# (params M, iou, size)
+	stage_4_models = {
+        "CNN-CNN": [(4.3, 89.14, "T"), (5.9, 89.73, "S"), (17.1, 90.06, "B"), (23.4, 89.76, "L")],
+        "ViT-CNN": [(3.9, 89.36, "T"), (5.9, 89.85, "S"), (15.7, 88.89, "B"), (23.7, 89.82, "L")],
+        "CNN-ViT": [(3.9, 89.81, "T"), (5.9, 90.46, "S"), (15.7, 90.42, "B"), (23.7, 90.76, "L")],
+        "ViT-ViT": [(3.5, 89.74, "T"), (6.0, 90.57, "S"), (14.4, 90.63, "B"), (24.1, 90.94, "L")],
+    }
+
+    # SET PLOT
+    fig, ax = plt.subplots(figsize=(7, 5))
+    markers = ["o", "s", "^", "D"]
+
+    # FOR EACH COMBINATION
+    for (arch, points), marker in zip(stage_4_models.items(), markers):
+        params = [p[0] for p in points]
+        iou    = [p[1] for p in points]
+        ax.scatter(params, iou, marker=marker, label=arch, s=60)
+ 
+        # annotate each point with its size label (T/S/B/L)
+        for x, y, label in points:
+            ax.annotate(label, (x, y), textcoords="offset points",
+                        xytext=(5, 5), fontsize=8)	
+
+    # ADJUST PLOT
+	ax.set_xlabel("Params (M)")
+	ax.set_ylabel("IoU")
+	ax.set_title("IoU vs. Parameter Count by Architecture")
+	ax.grid(True, linestyle="--", alpha=0.4)
+	ax.legend(title="Architecture")
+
+	# TO FILE
+	save_path = f"./figures/parameters_vs_iou.png"
+	fig.tight_layout()
+	fig.savefig(save_path, dpi=300)
+
+
 def get_best_stage_5(log_dir):
 	'''
 	Evaluate ViT2 (patch embedding) and CNN2 (depthwise-separable conv).

@@ -24,7 +24,7 @@ class Downloader():
 		#SATELLITE PARAMETERS
 		self.instrument  = "MSI"
 		self.productType = "S2MSI2A"
-		self.sensorMode  = None #some "null" some INS-NOBS for S2 ¿?
+		self.sensorMode  = None #some "null, some INS-NOBS for S2
 
 		#AOI PARAMETERS
 		self.cloudCover = "5.00"
@@ -166,16 +166,17 @@ class Downloader():
 			fp.write(str("\n".join(self.s3_band_paths)))
 
 
-	def download_rclone_queue(self,queue_file):
+	def download_rclone_queue(self,queue_file,download=False):
 		'''
 		Download products via S3.
 		'''
+		# set S3 call for rclone
+		cmd = ["rclone","copy","--include-from",queue_file,"esa:",self.out_dir,"-P","--transfers",self.RCLONE_MAX]
+		if download:
+			cmd += ["--dry-run"]
+
 		#download -- this does only a dry run. Remove dry-run flag to actually download.
-		proc0 = sp.run([
-			"rclone","copy",
-			"--include-from",queue_file,
-			"esa:",self.out_dir,"-P",
-			"--transfers",self.RCLONE_MAX,"--dry-run"])
+		proc0 = sp.run(cmd)
 
 
 if __name__ == '__main__':
