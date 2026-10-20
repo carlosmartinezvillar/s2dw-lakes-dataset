@@ -606,7 +606,14 @@ def get_best_stage_3(log_dir):
 			plot_training_log(f"{log_dir}/stage_3/epochs_{best_id:03}.tsv")
 
 	'''
-	Best are 000,055,018,065
+	Best are 000,055,018,065, selected by agreement of averaged & raw scores.
+
+	By EMA: 000,056,018,063
+	By IoU: 038,055,018,065
+
+	However, 056 and 063 are the worst IoUs for that model, 
+	so they are replaced with 055 and 065, respectively.
+
 	'''
 
 
@@ -826,4 +833,4 @@ if __name__ == '__main__':
 	# get_best_stage_1(log_dir)
 	# get_best_stage_2(log_dir)
 	# get_best_stage_3(log_dir)
-	get_best_stage_4(log_dir) #final models + test results
+	get_best_stage_4(log_dir) #16 final models + test results

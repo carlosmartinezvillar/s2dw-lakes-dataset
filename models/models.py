@@ -31,8 +31,9 @@ class ConvBlock(nn.Module):
 			))
 
 	def forward(self,x):
+		out = x
 		for layer in self.block:
-			out = layer(x)
+			out = layer(out)
 		return x + out
 
 
@@ -64,7 +65,7 @@ class MultiHeadSelfAttention(nn.Module):
 	'''
 	Multi-head Self-Attention Operation
 	B: batch dimension
-	E: embedding dimensino
+	E: embedding dimension
 	N: sequence length
 	H: head dimension
 	'''
@@ -85,11 +86,15 @@ class MultiHeadSelfAttention(nn.Module):
 		K = K.view(B,N,self.num_heads,self.head_dim).transpose(1,2)
 		V = V.view(B,N,self.num_heads,self.head_dim).transpose(1,2)
 
+		# MANUAL
 		attn = (Q @ K.transpose(-2, -1)) # [B,num_heads,N,N]
 		attn = attn / (self.head_dim ** 0.5)
 		attn = attn.softmax(dim=-1)
-
 		x = attn @ V # [B,num_heads,N,H]
+
+		#OR
+		# F.scaled_dot_product_attention(Q,K,V)
+
 		x = x.transpose(1, 2).reshape(B,N,self.E) #[B,num_heads,N,H] -> [B,N,num_heads,H] -> [B,N,E]
 		return self.W_o(x) # [B,N,E]
 
@@ -118,7 +123,7 @@ class MultiHeadCrossAttention(nn.Module): #<<< option?
 		V        = V.view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
 
 
-		attn = (Q @ K.transpose(-2, -1)) # [B,num_heads,N,N]
+		attn = (Q @ K.transpose(-2, -1)) # [B,num_heads,N,S]
 		attn = attn / (self.head_dim ** 0.5)
 		attn = attn.softmax(dim=-1)
 
@@ -414,7 +419,7 @@ class ViTEncoderStemmed(nn.Module):
 	Patch embedding on inputs HxW to H/4xW/4. CNN stem to pass high-dimension 
 	feature maps from encoder to decoder.
 	'''
-	def __init__(self,in_channels=3,cnn_layers=2,vit_layers=1,channels=32,mlp_ratio=4):
+	def __init__(self,in_channels=3,vit_layers=1,channels=32,mlp_ratio=4):
 		super().__init__()
 		stem_params = {'kernel_size': 3, 'stride': 1, 'padding': 1, 'bias': True}
 		down_params = {'kernel_size': 3, 'stride': 2, 'padding': 1, 'bias': True}
@@ -425,7 +430,7 @@ class ViTEncoderStemmed(nn.Module):
 		self.patches_h = img_size // patch_size
 		self.patches_w = img_size // patch_size
 
-		#CNN STEM
+		#CNN STEM -- FEATURES FOR SKIP CONNECTIONS
 		self.stem_1 = nn.Sequential(
 			nn.Conv2d(in_channels,channels,**stem_params),
 			nn.GroupNorm(1,channels),
@@ -637,6 +642,10 @@ def get_model_memory_size(model):
 
 	# DUMMY INPUT
 	x = torch.randn(16,3,256,256)
+
+	# CLEAR MEM
+	torch.cuda.reset_peak_memory_stats()
+
 
 	# TO DEV
 	model = model.cuda()
