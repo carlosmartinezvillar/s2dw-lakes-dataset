@@ -11,9 +11,66 @@ import random
 import copy
 
 
+def sample(spec):
+    '''
+    ('log',lo,hi)   -> log-uniform in [lo,hi]
+    ('choice',[..]) -> uniform over the list
+    '''
+    if spec[0] == 'log':
+        _, lo, hi = spec
+        return float(np.exp(np.random.uniform(np.log(lo), np.log(hi))))
+    return spec[1][np.random.randint(len(spec[1]))]
+
+
 def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
+
+
+def set_experiments(n=30,seed=476,path='./hparams/experiments_1.json'):
+
+	# SAMPLING SPACE
+	space = {
+		'lrate': ('log', 5e-5, 5e-4),
+		'decay': ('log', 1e-4, 1e-2)
+	}
+
+
+	# FIXED PARAMETERS
+	batch      = 32
+	epochs     = 100
+
+	# SET GRID
+	grid = []
+	cnn_layers = [2,3]
+	for encoder_type, decoder_type in itertools.product(['cnn', 'vit'], ['cnn', 'vit']):
+		vit_layers = [0] if encoder_type == decoder_type == 'cnn' else [1, 2]
+
+		for n_vit,n_cnn,init_chan in itertools.product(vit_layers,cnn_layers,[32,64]):
+			grid.append((encoder_type,decoder_type,init_chan,n_cnn,n_vit))
+
+	i=0
+	with open(path,'w') as fp:
+
+		for encoder_type,decoder_type,init_chan,n_cnn,n_vit in grid:
+			for _ in range(n):
+
+				exp = {k: sample(v) for k, v in space.items()}				
+
+				exp['batch'] = batch
+				# exp['lrate'] = exp['lrate'] 
+				exp['encoder'] = encoder_type
+				exp['decoder'] = decoder_type
+				exp['init_chan'] = init_chan
+				exp['cnn_layers'] = n_cnn
+				exp['vit_layers'] = n_vit
+
+				for k in ('lrate', 'decay'):
+					exp[k] = float(f"{exp[k]:.3g}")
+
+				exp.update({'id': i, 'seed': seed, 'epochs': epochs})
+				fp.write(json.dumps(exp) + '\n')
+				i += 1
 
 
 def stage_1():
