@@ -84,7 +84,6 @@ class TrainTransform:
 		return image, label
 
 
-
 class SentinelDataset(torch.utils.data.Dataset):
 	def __init__(self,chip_dir,n_bands=3,n_labels=2,transform=None):
 

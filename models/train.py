@@ -7,7 +7,7 @@ import time
 import argparse
 import json
 from functools import wraps
-import inspect
+import math
 
 import models
 import dataloader
@@ -21,6 +21,7 @@ LOG_DIR   = None
 MODEL_DIR = None
 CUDA_DEV  = None
 N_WORKERS = None
+
 
 ####################################################################################################
 # CLASSES
@@ -62,24 +63,6 @@ class Logger():
 
 		with open(self.path,'a') as fp:
 			fp.write('\t'.join(row) + '\n')
-
-
-class EMA:
-	'''
-	Exponential moving average for IoU to decide on best checkpoint (by IoU).
-	Smoothing is determined by 'alpha' parameter.
-	'''
-	def __init__(self,alpha=0.3):
-		self.alpha = alpha
-		self.value = None
-
-
-	def update(self,new_value):
-		if self.value is None:
-			self.value = new_value #first step
-		else:
-			self.value = self.alpha * new_value + (1-self.alpha) * self.value #ema
-		return self.value
 
 
 class RecentBestTracker:
@@ -127,11 +110,9 @@ def parse_args():
 
 	# OPTIONAL
 	optional = parser.add_argument_group('Optional arguments')
-	optional.add_argument('--gpu',required=False,type=int,default=0,
+	optional.add_argument('--device',required=False,type=int,default=0,
 		help='GPU id to train in, if different than 0. Useful to select a gpu in a multi-gpu machine.')
-	optional.add_argument('--full',required=False,action='store_true',default=False,
-		help='Train on both training and validation sets (training final model).')
-	optional.add_argument('--workers',required=False,type=int,default=2,
+	optional.add_argument('--num-workers',required=False,type=int,default=2,
 		help='Sets num_workers for training and validation dataloaders.')
 
 	# LOAD 
@@ -142,21 +123,21 @@ def parse_args():
 	assert os.path.isdir(args.net_dir), f"No path found for checkpoint dir in {args.net_dir}"
 	assert os.path.isdir(args.log_dir), f"No path found for log dir {args.log_dir}"
 	assert os.path.isfile(args.params), f"No hyperparameter found in {args.params}"
-	assert args.gpu >= 0, f"Got negative arg for GPU id {args.gpu}"
-	if args.gpu > 0:
-		assert args.gpu < torch.cuda.device_count(), "GPU INDEX OUT OF RANGE."
+	assert args.device >= 0, f"Got negative arg for GPU id {args.device}"
+	if args.device > 0:
+		assert args.device < torch.cuda.device_count(), "GPU INDEX OUT OF RANGE."
 
 	# SET GLOBAL VARIABLES
-	global DATA_DIR
+	# global DATA_DIR
 	global LOG_DIR
 	global MODEL_DIR
-	global CUDA_DEV
-	global N_WORKERS
-	DATA_DIR  = args.data_dir
+	# global CUDA_DEV
+	# global N_WORKERS
+	# DATA_DIR  = args.data_dir
 	LOG_DIR   = args.log_dir
 	MODEL_DIR = args.net_dir
-	CUDA_DEV  = torch.device(f"cuda:{args.gpu}")
-	N_WORKERS = args.workers
+	# CUDA_DEV  = torch.device(f"cuda:{args.gpu}")
+	# N_WORKERS = args.num_workers
 	return args
 
 
@@ -253,18 +234,6 @@ def total_time_decorator(orig_func):
 	return wrapper
 
 
-def print_exploding_layers(total_norm,model):
-	'''
-	Only needed if best models are definitely not converging
-	'''
-	if torch.isinf(total_norm) or torch.isnan(total_norm):
-	    for name, param in model.named_parameters():
-	        if param.grad is not None:
-	            param_norm = param.grad.data.norm(2)
-	            if torch.isinf(param_norm) or torch.isnan(param_norm):
-	                print(f"--- Layer: {name} | Norm: {param_norm}")		
-
-
 def load_hyperparameters(args):
 
 	# LOAD FILE
@@ -277,29 +246,19 @@ def load_hyperparameters(args):
 	assert args.id in hp_list_indexed, f"model id '{args.id}' not in hyperparameter file {args.params}"
 
 	# SET DICT FOR CURRENT MODEL
-	HP = hp_list_indexed[args.id]
+	HP = {**hp_list_indexed[args.id]}
 
 	# CHECK DICT
 	try:
-		# CHECK INPUTS,OUTPUTS
-		assert HP['bands'] in [3,4], f"Incorrect band nr {HP['bands']} in hyperparameters"
-		assert HP['labels'] ==  2, f"Incorrect # of classes {HP['labels']} in hyperparameters"
+		# CHECK ENCODER/DECODER STRINGS MATCH models.py
+		assert HP['encoder'] in models._ENCODERS, f"Incorrect encoder {HP['encoder']} in hyperparameters"
+		assert HP['decoder'] in models._DECODERS, f"Incorrect decoder {HP['decoder']} in hyperparameters"
 
-		#CHECK CLASS NAME MATCHES models.py
-		model_classes = [name for name,obj in inspect.getmembers(models,inspect.isclass)]
-
-		# CHECK MODEL, OPTIMIZER, SCHEDULER STRINGS.
-		assert HP['model'] in model_classes, "Incorrect model string in hyperparameter dict"
-		assert HP['optim'] in ["adam","sgd","adamw"], "Incorrect string for optimizer in dict."
-		assert HP['cycles'] in range(1,4), f"Incorrect cycles {HP['cycles']} in hyperparameters"
-		assert HP['loss'] in ["ce","ew","cw"], f"Incorrect string {HP['loss']} for loss in dict."
-		assert HP['scheduler'] in ["cos","none"], f"Incorrect string {HP['scheduler']} in hyperparameters"
-
-		# CHECK MODEL SIZE PARAMS
+		# CHECK MODEL SIZE PARAMS -- vit_layers=0 ONLY FOR ALL-CNN MODELS
+		all_cnn = HP['encoder'] == HP['decoder'] == 'cnn'
 		assert HP['cnn_layers'] in [2,3], f"Incorrect # of conv layers {HP['cnn_layers']} in hyperparameters."
-		assert HP['vit_layers'] in [1,2], f"Incorrect # of ViT layers {HP['vit_layers']} in hyperparameters."
-		assert HP['channels'] in [16,32], f"Incorrect # of channels {HP['channels']} in hyperparameters."
-		assert HP['mlp_ratio'] in [2,3,4,5], f"Incorrect mlp dimension {HP['mlp_ratio']} in hyperparameters."
+		assert HP['vit_layers'] in ([0] if all_cnn else [1,2]), f"Incorrect # of ViT layers {HP['vit_layers']} in hyperparameters."
+		assert HP['init_chan'] in [16,32,64], f"Incorrect # of channels {HP['init_chan']} in hyperparameters."
 
 	except AssertionError:
 		print(f"hparams file:  {args.params}")
@@ -318,21 +277,123 @@ def format_stdout_metrics(prefix, loss, acc, iou, n_classes):
 		s += f' | IoU_0: {iou[0]:.5f} | IoU_1: {iou[1]:.5f}'
 	return s
 
-####################################################################################################
-# TRAININING ON FULL DATASET? -- MISSING
-####################################################################################################
-def train_full_set(model,dataloaders,optimizer,loss_fn,scaler,scheduler,epochs=100,n_classes=2):
-	'''
-	Train the model with the train+validation datasets combined.
-	'''
-	pass
+
+def set_scheduler(epochs,optimizer,warmup_steps=10):
+	# SCHEDULER -- LINEAR WARMUP + COSINE ANNEALING W/O RESTARTS
+	# AS A FACTOR ON EACH GROUP'S OWN LRATE (SAME FORM AS THE OTHER TRAINING SCRIPTS)
+
+	# ADJUSTMENT STEPS
+	# warmup_steps = 10
+	cosine_steps = epochs-warmup_steps
+
+	# ADJUST OP
+	min_factor = 1.0 / cosine_steps
+	cosine_factor = lambda e: min_factor + (1.0-min_factor) * 0.5 * (1.0 + math.cos(math.pi * min(e,cosine_steps) / cosine_steps))
+
+	# COMBINE CLASSES
+	warmup_sched = torch.optim.lr_scheduler.LinearLR(
+		optimizer,start_factor=1e-2,end_factor=1.0,total_iters=warmup_steps)
+	cosine_sched = torch.optim.lr_scheduler.LambdaLR(
+		optimizer,lr_lambda=cosine_factor)
+	scheduler = torch.optim.lr_scheduler.SequentialLR(
+		optimizer,schedulers=[warmup_sched,cosine_sched],milestones=[warmup_steps])
+
+	return scheduler
 
 
 ####################################################################################################
 # TRAININING+VALIDATION
 ####################################################################################################
+def train(model,dataloader,aug,optimizer,loss_fn,device,n_classes=2):
+	'''
+	One training epoch. Returns a dict with the epoch loss and per-class metric tensors:
+	{'loss': float, 'acc': tensor, 'tpr': tensor, 'ppv': tensor, 'iou': tensor}
+	'''
+	# Confusion matrix in GPU to avoid sync
+	gpu_mat = torch.zeros((n_classes,n_classes),device=device,dtype=torch.int64)
+
+	# TRAIN LOGS
+	loss_sum   = torch.zeros(1,device=device)
+	sample_sum = torch.zeros(1,device=device)
+
+	#LOOP
+	model.train()
+	for X,T in dataloader:
+
+		#TO DEVICE
+		X = X.to(device,non_blocking=True)
+		T = T.to(device,non_blocking=True)
+
+		X,T = aug(X,T)
+
+		# FORWARD
+		with torch.autocast(device_type="cuda", dtype=torch.bfloat16,enabled=True):
+			output = model(X)
+			loss   = loss_fn(output,T)
+
+		# BACKPROP
+		optimizer.zero_grad()
+		loss.backward()
+		torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+		optimizer.step()
+
+		# METRICS -- Loss
+		loss_sum   += loss.detach() * X.size(0)
+		sample_sum += X.size(0)
+
+		# METRICS -- Confusion matrix in gpu
+		Y = output.detach().argmax(axis=1) #keep detach if needed to switch to .max()
+		update_confusion_matrix(gpu_mat,T,Y,n_classes)
+
+	# EPOCH METRICS
+	loss_epoch  = (loss_sum/sample_sum).item() #------------------------cpu-gpu sync
+	ppv,tpr,acc,iou = calculate_metrics(gpu_mat.cpu()) #---------------cpu-gpu sync
+	return {'loss': loss_epoch, 'acc': acc, 'tpr': tpr, 'ppv': ppv, 'iou': iou}
+
+
+@torch.no_grad()
+def validate(model,dataloader,aug,loss_fn,device,n_classes=2):
+	'''
+	One validation pass. Returns a dict with the same keys as train().
+	'''
+	# Confusion matrix in GPU to avoid sync
+	gpu_mat = torch.zeros((n_classes,n_classes),device=device,dtype=torch.int64)
+
+	# VALIDATION LOGS
+	loss_sum   = torch.zeros(1,device=device)
+	sample_sum = torch.zeros(1,device=device)
+
+	# LOOP
+	model.eval()
+	for X,T in dataloader:
+
+		# TO DEV
+		X = X.to(device,non_blocking=True)
+		T = T.to(device,non_blocking=True)
+
+		X,T = aug(X,T)
+
+		# FORWARD
+		with torch.autocast(device_type="cuda",dtype=torch.bfloat16,enabled=True):
+			output = model(X)
+			loss   = loss_fn(output,T)
+		Y = output.argmax(axis=1) #hard-prediction
+
+		# METRICS -- Loss
+		loss_sum   += loss * X.size(0)
+		sample_sum += X.size(0)
+
+		# METRICS -- Confusion matrix
+		update_confusion_matrix(gpu_mat,T,Y,n_classes)
+
+	# EPOCH METRICS
+	loss_epoch  = (loss_sum/sample_sum).item() #------------------------cpu-gpu sync
+	ppv,tpr,acc,iou = calculate_metrics(gpu_mat.cpu()) #---------------cpu-gpu sync
+	return {'loss': loss_epoch, 'acc': acc, 'tpr': tpr, 'ppv': ppv, 'iou': iou}
+
+
 @total_time_decorator
-def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n_classes=2):
+def train_and_validate(model,dataloaders,tr_aug,va_aug,optimizer,loss_fn,scheduler,device,epochs=100,n_classes=2):
 
 	# AUTOMATIC MIXED PRECISION -- switched to bfloat16
 	# scaler = torch.amp.GradScaler("cuda",enabled=True,init_scale=1024)
@@ -344,11 +405,7 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 	# BEST MODEL/EPOCH METRICS
 	best_epoch = 0
 	best_iou   = 0.0
-	recent_best_iou = RecentBestTracker(n=1)
-	best_epoch_ema = 0
-	best_iou_ema   = 0.0
-	ema_iou = EMA()
-	recent_best_ema = RecentBestTracker(n=3)
+	recent_best_iou = RecentBestTracker(n=3)
 
 	for epoch in range(epochs):
 
@@ -356,100 +413,17 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 		print(f'\nEpoch {epoch}/{epochs-1}')
 		print('-'*80,flush=True)
 
-		# Confusion matrices in GPU to avoid sync
-		gpu_mat_tr = torch.zeros((n_classes,n_classes),device=CUDA_DEV,dtype=torch.int64) 
-		gpu_mat_va = torch.zeros((n_classes,n_classes),device=CUDA_DEV,dtype=torch.int64)
-
 		# EPOCH TIME
 		epoch_start_time = time.perf_counter()
 
-		############################################################
 		# TRAINING
-		############################################################
-		# TRAIN LOGS		
-		loss_sum_tr   = torch.zeros(1,device=CUDA_DEV)
-		sample_sum_tr = torch.zeros(1,device=CUDA_DEV)
+		tr_result = train(model,dataloaders['training'],tr_aug,optimizer,loss_fn,device,n_classes)
+		scheduler.step()
+		print(format_stdout_metrics('T',tr_result['loss'],tr_result['acc'],tr_result['iou'],n_classes))
 
-		#LOOP
-		model.train()		
-		for i,(X,T) in enumerate(dataloaders['training']):
-
-			#TO DEVICE
-			X = X.to(CUDA_DEV,non_blocking=True)
-			T = T.to(CUDA_DEV,non_blocking=True)
-
-			# FORWARD
-			with torch.autocast(device_type="cuda", dtype=torch.bfloat16,enabled=True):
-				output = model(X)
-				loss   = loss_fn(output,T)
-
-			# CHECK IF COLLAPSING
-			# if i==0 and epoch <=8: 
-			# 	with torch.no_grad():
-			# 		preds = output.argmax(1)
-			# 		print(f"pred class balance: {preds.float().mean().item():.4f}")
-			# 		print(f"logit std: {output.std().item():.6f}")
-
-			# BACKPROP
-			optimizer.zero_grad()
-			loss.backward()
-			torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-			optimizer.step()
-
-			# METRICS -- Loss
-			loss_sum_tr   += loss.detach() * X.size(0)
-			sample_sum_tr += X.size(0)
-
-			# METRICS -- Confusion matrix in gpu
-			Y = output.detach().argmax(axis=1) #keep detach if needed to switch to .max()
-			T = T.detach()
-			update_confusion_matrix(gpu_mat_tr,T,Y,n_classes)
-
-		#SCHEDULER UPDATE
-		if scheduler is not None:
-			scheduler.step()
-
-		# TRAINING METRICS
-		loss_tr    = (loss_sum_tr/sample_sum_tr).item() #---------------cpu-gpu sync
-		cpu_mat_tr = gpu_mat_tr.cpu() #---------------------------------cpu-gpu sync
-		tr_ppv,tr_tpr,tr_acc,tr_iou = calculate_metrics(cpu_mat_tr) #tensor,result per class 
-		print(format_stdout_metrics('T',loss_tr,tr_acc,tr_iou,n_classes))
-		
-		############################################################
 		# VALIDATION
-		############################################################
-		# VALIDATION LOGS		
-		loss_sum_va   = torch.zeros(1,device=CUDA_DEV)
-		sample_sum_va = torch.zeros(1,device=CUDA_DEV)
-
-		# LOOP
-		model.eval()
-		with torch.no_grad():
-			for X,T in dataloaders['validation']:
-
-				# TO DEV
-				X = X.to(CUDA_DEV,non_blocking=True)
-				T = T.to(CUDA_DEV,non_blocking=True)
-
-				# FORWARD
-				with torch.autocast(device_type="cuda",dtype=torch.bfloat16,enabled=True):
-					output = model(X)
-					loss   = loss_fn(output,T)
-				Y_soft,Y   = torch.max(output,1) #soft-prediction, hard-prediction
-
-				# METRICS -- Loss
-				loss_sum_va   += loss.detach() * X.size(0)
-				sample_sum_va += X.size(0)
-
-				# METRICS -- Confusion matrix
-				update_confusion_matrix(gpu_mat_va,T,Y,n_classes)
-
-
-		# VALIDATION METRICS
-		loss_va    = (loss_sum_va / sample_sum_va).item() #-------------cpu-gpu sync
-		cpu_mat_va = gpu_mat_va.cpu() #---------------------------------cpu-gpu sync
-		va_ppv,va_tpr,va_acc,va_iou = calculate_metrics(cpu_mat_va)
-		print(format_stdout_metrics('V',loss_va,va_acc,va_iou,n_classes))
+		va_result = validate(model,dataloaders['validation'],va_aug,loss_fn,device,n_classes)
+		print(format_stdout_metrics('V',va_result['loss'],va_result['acc'],va_result['iou'],n_classes))
 
 		############################################################
 		# LOG EPOCH
@@ -458,31 +432,18 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 		epoch_time = time.perf_counter() - epoch_start_time
 		print(f'\nEpoch time: {epoch_time:.2f}s')
 
-		# LOG THIS EPOCH RESULTS
-		logger.log({'tloss': loss_tr, 'vloss': loss_va,
-			'tacc': tr_acc, 'ttpr':tr_tpr,'tppv':tr_ppv,'tiou': tr_iou, 
-			'vacc': va_acc, 'vtpr': va_tpr, 'vppv': va_ppv, 'viou': va_iou})
+		# LOG THIS EPOCH RESULTS -- t/v PREFIX ON EACH RESULT KEY (tloss, viou, ...)
+		logger.log({**{f't{k}': v for k,v in tr_result.items()},
+					**{f'v{k}': v for k,v in va_result.items()}})
 
 		# EPOCH VALIDATION IoU -- IoU/mIoU
-		if n_classes > 2:
-			epoch_iou = va_iou.mean().item() #mIoU for 3+ classes
-		else:
-			epoch_iou = va_iou[1].item() #true label iou for 2 classes
+		epoch_iou = va_result['iou'][1].item() #true label iou for 2 classes
 
-		# BEST MODEL BY SMOOTHED METRIC
-		smoothed_iou = ema_iou.update(epoch_iou)
-		print(f"EMA IoU: {smoothed_iou:.5f}")
-		if epoch >= 5 and best_iou_ema < smoothed_iou:
-			best_iou_ema   = smoothed_iou
-			best_epoch_ema = epoch
-			chkpt_path = save_checkpoint(MODEL_DIR,model,optimizer,epoch,loss_tr,loss_va,best=False)
-			recent_best_ema.update(chkpt_path)
-
-		# NON-SMOOTHED/MAX RAW IoU
+		# MAX RAW IoU
 		if epoch >= 5 and best_iou < epoch_iou:
 			best_iou   = epoch_iou
 			best_epoch = epoch
-			chkpt_path = save_checkpoint(MODEL_DIR,model,optimizer,epoch,loss_tr,loss_va,best=True)
+			chkpt_path = save_checkpoint(MODEL_DIR,model,optimizer,epoch,tr_result['loss'],va_result['loss'],best=True)
 			recent_best_iou.update(chkpt_path)
 
 	############################################################
@@ -490,10 +451,8 @@ def train_and_validate(model,dataloaders,optimizer,loss_fn,scheduler,epochs=50,n
 	############################################################
 	mem_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
 	print(f'\nBest validation IoU:    {best_iou:.5f} -- Epoch {best_epoch}')
-	print(f'Best validation EMA(IoU): {best_iou_ema:.5f} -- Epoch {best_epoch_ema}')
-	print(f'Epochs saved: {recent_best_ema.epochs()} (ema) and {recent_best_iou.epochs()} (iou)') 
+	print(f'Epochs saved: {recent_best_iou.epochs()} (by iou)') 
 	print(f"Peak GPU memory allocated: {mem_gb:.2f} GB")
-
 
 
 ####################################################################################################
@@ -507,97 +466,87 @@ if __name__ == "__main__":
 	HP = load_hyperparameters(args)
 
 	#---------- SET SEEDS -------------------------------------------------------------------------
-	if HP['seed'] != 0: #If zero in dict, set as 'completely' random.
+	if HP['seed'] != 0: #If zero in dict, seed not assigned.
 		set_seed(HP['seed'])
 
+	#---------- DEVICE/GPU ------------------------------------------------------------------------
+	device = torch.device(f'cuda:{args.device}')
+
 	#---------- LOAD MODEL ------------------------------------------------------------------------
-	model = getattr(models,HP['model'])
-	net = model(HP['id'],HP['bands'],HP['labels'],HP['cnn_layers'],HP['vit_layers'],HP['channels'],HP['mlp_ratio'])
-	net = net.to(CUDA_DEV)
-	# net = torch.compile(net)
+	net = models.UNet(
+		HP['id'],
+		encoder=HP['encoder'],
+		decoder=HP['decoder'],
+		in_channels=4,
+		out_labels=2,
+		cnn_layers=HP['cnn_layers'],
+		vit_layers=HP['vit_layers'],
+		init_channels=HP['init_chan']
+	)
+	net = net.to(device)
 
 	#---------- LOSS ------------------------------------------------------------------------------
-	if HP['loss'] == "ce":
-		loss_fn = torch.nn.CrossEntropyLoss()
-	if HP['loss'] == "cw": # <- Not needed? positive class ~47%
-		class_weights = torch.tensor([0.47,0.53],device=CUDA_DEV)
-		loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights)
+	loss_fn = torch.nn.CrossEntropyLoss()
 
 	#---------- OPTIMIZER -------------------------------------------------------------------------
-	if HP['optim'] == "adam":
-		optimizer = torch.optim.Adam(net.parameters(),lr=HP['lrate'])
-	if HP['optim'] == "sgd":
-		optimizer = torch.optim.SGD(net.parameters(),lr=HP['lrate'])
-	if HP['optim'] == 'adamw':
-		optimizer = torch.optim.AdamW(net.parameters(),lr=HP['lrate'],weight_decay=HP["decay"])
-
-	#---------- DATALOADERS ------------------------------------------------------------------------
-	train_transform = dataloader.TrainTransform()
-
-	tr_dataset = dataloader.SentinelDataset(f"{DATA_DIR}/training",
-		n_bands=HP['bands'],
-		n_labels=HP['labels'],
-		transform=train_transform)
-
-	va_dataset = dataloader.SentinelDataset(f"{DATA_DIR}/validation",
-		n_bands=HP['bands'],
-		n_labels=HP['labels'],
-		transform=None)
-
-	dataloaders = {
-		'training': torch.utils.data.DataLoader(
-			tr_dataset,
-			batch_size=HP['batch'],
-			drop_last=False,
-			shuffle=True,
-			num_workers=N_WORKERS,
-			pin_memory=True,
-			prefetch_factor=8),
-		'validation': torch.utils.data.DataLoader(
-			va_dataset,
-			batch_size=HP['batch'],
-			drop_last=False,
-			shuffle=False,
-			num_workers=N_WORKERS,
-			pin_memory=True,
-			prefetch_factor=8)
-	}
+	optimizer = torch.optim.AdamW(net.parameters(),lr=HP['lrate'],weight_decay=HP["decay"])
 
 	#---------- LEARNING RATE SCHEDULER ------------------------------------------------------------
-	if HP['scheduler'] == "cos":
-		warmup_steps = 5
-		cosine_steps = (HP['epochs'] - warmup_steps) // HP['cycles']
+	scheduler = set_scheduler(HP['epochs'],optimizer,warmup_steps=10)
 
-		warmup_sched = torch.optim.lr_scheduler.LinearLR(
-			optimizer,
-			start_factor=1e-2,
-			end_factor=1.0,
-			total_iters=warmup_steps
-		)
+	#---------- DATALOADERS ------------------------------------------------------------------------
+	# Transforms (in gpu)
+	tr_aug = dataloader.GPUTransform(gain=0.10).to(device)
+	va_aug = dataloader.GPUValidationTransform().to(device)
 
-		cosine_sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-			optimizer,
-			T_0=cosine_steps,
-			T_mult=1,
-			eta_min=0.0)
+	# Load a contiguous dataset to RAM -- np.ndarray
+	tr_bands_np,tr_masks_np = dataloader.load_cached_split(args.data_dir,split='training')
+	va_bands_np,va_masks_np = dataloader.load_cached_split(args.data_dir,split='validation')
 
-		scheduler = torch.optim.lr_scheduler.SequentialLR(
-			optimizer,
-			schedulers=[warmup_sched,cosine_sched],
-			milestones=[warmup_steps]
-		)
+	# Load a contiguous dataset to RAM -- dataset
+	tr_dataset = dataloader.SentinelFastDataset(tr_bands_np,tr_masks_np,n_bands=4)
+	va_dataset = dataloader.SentinelFastDataset(va_bands_np,va_masks_np,n_bands=4)
 
-	if HP['scheduler'] == "none":
-		scheduler = None
+	tr_dataloader = torch.utils.data.DataLoader(
+		tr_dataset,
+		batch_size=HP['batch'],
+		drop_last=True,
+		shuffle=True,
+		num_workers=args.num_workers,
+		pin_memory=True,
+		prefetch_factor=6 if args.num_workers > 0 else None,
+		persistent_workers=args.num_workers > 0
+	)
+
+	va_dataloader = torch.utils.data.DataLoader(
+		va_dataset,
+		batch_size=HP['batch'],
+		drop_last=False,
+		shuffle=False,
+		num_workers=args.num_workers,
+		pin_memory=True,
+		prefetch_factor=6 if args.num_workers > 0 else None,
+		persistent_workers=args.num_workers > 0
+	)
+
+	dataloaders = {
+		'training': tr_dataloader,
+		'validation': va_dataloader 
+	}
 
 
 	#---------- TRAINING/RUN -----------------------------------------------------------------------
+	net = torch.compile(net)
+
 	train_and_validate(
 		net,
 		dataloaders,
+		tr_aug,
+		va_aug,
 		optimizer,
 		loss_fn,
 		scheduler,
+		device,
 		HP['epochs'],
-		HP['labels']
+		n_classes=2
 	)
