@@ -53,6 +53,90 @@ def load_cached_split(cache_dir,split):
 	print(f"{t1_disk_to_ram-t0_disk_to_ram:.2f} secs.")
 	return vnir,mask
 
+
+S1F11_IGNORE = 127       # SEN1FLOODS11 MASK VALUE FOR PIXELS TO IGNORE (LAND 0, WATER 255 AS IN S2DW)
+S1F11_RGBN   = [3,2,1,7] # S2Hand BAND INDICES OF B04,B03,B02,B08 -- S2DW ORDER R,G,B,NIR
+S1F11_CSV    = {
+	'train':   'flood_train_data.csv',
+	'valid':   'flood_valid_data.csv',
+	'test':    'flood_test_data.csv',
+	'bolivia': 'flood_bolivia_data.csv'}
+
+def build_cached_s1f11(s1f11_dir,cache_dir,split,dn_offset=1000,tile=256):
+	'''
+	Cache a hand-labeled Sen1Floods11 split in the S2DW .npy format. Bands are
+	prepared as in eval_sen1floods11.py: B04,B03,B02,B08 -> R,G,B,NIR; +dn_offset
+	(S2DW stretched 2025 L2A DNs, which carry a +1000 offset); clip at the per-chip
+	99th percentile of valid pixels and scale to 0-255; invalid pixels 0.
+	Each 512x512 chip becomes (512/tile)^2 tiles, row-major. Writes:
+		{cache_dir}/s1f11_{split}_bands.npy  uint8 [N,4,tile,tile]
+		{cache_dir}/s1f11_{split}_masks.npy  uint8 [N,tile,tile]  0 land, 255 water,
+		                                     S1F11_IGNORE where LabelHand is -1 or a band is 0
+		{cache_dir}/s1f11_{split}_ids.txt    one tile per line: <chip id>_<row>_<col>
+	split is one of train, valid, test, bolivia. Chips with < 100 valid pixels are
+	kept as all-ignore tiles so the ids stay complete. Load with
+	load_cached_split(cache_dir,f"s1f11_{split}").
+	'''
+	root = s1f11_dir.rstrip('/')
+	if os.path.isdir(f"{root}/v1.1"):
+		root = f"{root}/v1.1"
+	assert os.path.isdir(f"{root}/splits/flood_handlabeled"), f"No splits/flood_handlabeled under {root}"
+	base = f"{root}/data/flood_events/HandLabeled"
+
+	# CHIP IDS (e.g. Ghana_313799): CSV ROWS ARE "<id>_S1Hand.tif,<id>_LabelHand.tif" WITH CRLF ENDINGS
+	with open(f"{root}/splits/flood_handlabeled/{S1F11_CSV[split]}",'r') as fp:
+		chips = [l.strip().split(',')[0].replace('_S1Hand.tif','') for l in fp if l.strip()]
+
+	CHIP = 512
+	assert CHIP % tile == 0, f"tile {tile} does not divide {CHIP}"
+	k    = CHIP // tile
+	n    = len(chips) * k * k
+
+	pfx  = f"{cache_dir}/s1f11_{split}"
+	vnir = np.lib.format.open_memmap(f"{pfx}_bands.npy",mode='w+',dtype=np.uint8,shape=(n,4,tile,tile))
+	mask = np.lib.format.open_memmap(f"{pfx}_masks.npy",mode='w+',dtype=np.uint8,shape=(n,tile,tile))
+
+	ids,n_empty,n_px = [],0,np.zeros(3,np.int64) # n_px: LAND, WATER, IGNORED
+	for i,cid in enumerate(chips):
+		s2  = tiff.imread(f"{base}/S2Hand/{cid}_S2Hand.tif")                   # int16, 13 BANDS
+		if s2.shape[0] != 13: # PIXEL-INTERLEAVED FILE -> BAND FIRST
+			s2 = np.moveaxis(s2,-1,0)
+		lbl = np.squeeze(tiff.imread(f"{base}/LabelHand/{cid}_LabelHand.tif")) # -1/0/1
+		assert s2.shape[1:] == lbl.shape == (CHIP,CHIP), f"{cid}: unexpected shape {s2.shape} / {lbl.shape}"
+
+		valid = (lbl != -1) & np.all(s2[S1F11_RGBN] > 0,axis=0)
+		img   = np.zeros((4,CHIP,CHIP),np.uint8)
+		if valid.sum() < 100: # NOTHING TO STRETCH OR LEARN FROM
+			valid[:] = False
+			n_empty += 1
+		else:
+			for ch,b in enumerate(S1F11_RGBN): # PER-BAND 99th-PERCENTILE STRETCH -> 0-255
+				x  = s2[b].astype(np.float64) + dn_offset
+				hi = int(np.percentile(x[valid],99))
+				if hi > 0:
+					img[ch] = np.round(np.clip(x,0,hi) / hi * 255).astype(np.uint8)
+			img[:,~valid] = 0
+		lbl8 = np.where(valid,np.where(lbl == 1,255,0),S1F11_IGNORE).astype(np.uint8)
+		n_px += [(lbl8 == 0).sum(),(lbl8 == 255).sum(),(~valid).sum()]
+
+		for r in range(k):
+			for c in range(k):
+				j = (i*k + r)*k + c
+				vnir[j] = img[:,r*tile:(r+1)*tile,c*tile:(c+1)*tile]
+				mask[j] = lbl8[r*tile:(r+1)*tile,c*tile:(c+1)*tile]
+				ids.append(f"{cid}_{r}_{c}")
+
+	for arr in (vnir,mask):
+		arr.flush()
+	with open(f"{pfx}_ids.txt","w") as fp:
+		fp.write('\n'.join(ids))
+
+	land,water,ign = n_px
+	print(f"[s1f11 {split}] {len(chips)} chips -> {n} tiles ({n_empty} chips with no valid pixels) | "
+		f"pixels: land {land}, water {water} ({water/max(land+water,1):.1%} of valid), ignored {ign}")
+	print(f"Cached bands written to {pfx}_bands.npy")
+	print(f"Cached labels written to {pfx}_masks.npy")
+
 ################################################################################
 # CLASSES
 ################################################################################
@@ -264,3 +348,16 @@ if __name__ == '__main__':
 	splits = ("training","validation","testing")
 	for s in splits:
 		build_cached_dataset(args.data_dir,args.cache_dir,s)
+
+
+class S1F11FastDataset(torch.utils.data.Dataset):
+
+	def __init__(self,bands_ndarray,masks_ndarray):
+		pass
+
+	def __len__(self):
+		pass
+
+	def __getitem__(self,idx):
+		pass
+
