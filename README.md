@@ -127,7 +127,7 @@ Stage 1 results: peak validation IoU for the water class, RGB input, 35 epochs, 
 ```bash
 cd models
 python3 train.py   --data-dir ${CHIP_DIR}_sorted --net-dir ./nets --log-dir ./logs -p hparams/stage_1.json --id 15
-python3 test.py    --data-dir ${CHIP_DIR}_sorted --checkpoint ./nets/<checkpoint>.pth.tar --log-dir ./logs -p hparams/stage_1.json
+python3 test.py    --data-dir <cache dir> --checkpoint ./nets/<checkpoint>.pth.tar --log-dir ./logs -p hparams/experiments_1.json --test-set {s2dw,s1f11_hand,s1f11_bolivia}
 python3 results.py --log-dir ./logs
 ```
 
