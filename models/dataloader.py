@@ -14,6 +14,12 @@ import argparse
 MEAN = torch.tensor([123.305154,132.731427,131.599954,115.507302]).view(-1,1,1)
 STDD = torch.tensor([53.223368,51.529520,53.707588,55.610260]).view(-1,1,1)
 
+MEAN_S1F11_HAND = torch.tensor([181.2,202.1,206.6,186.6]).view(-1,1,1)
+STDD_S1F11_HAND = torch.tensor([34.4,27.3,26.5,40.6]).view(-1,1,1)
+
+MEAN_S1F11_WEAK = torch.tensor([174.3,194.7,200.0,180.3]).view(-1,1,1)
+STDD_S1F11_WEAK = torch.tensor([37.0,29.8,28.7,44.0]).view(-1,1,1)
+
 ################################################################################
 # FUNCTIONS/HELPERS
 ################################################################################
@@ -55,37 +61,65 @@ def load_cached_split(cache_dir,split):
 
 
 S1F11_IGNORE = 127       # SEN1FLOODS11 MASK VALUE FOR PIXELS TO IGNORE (LAND 0, WATER 255 AS IN S2DW)
-S1F11_RGBN   = [3,2,1,7] # S2Hand BAND INDICES OF B04,B03,B02,B08 -- S2DW ORDER R,G,B,NIR
-S1F11_CSV    = {
+S1F11_RGBN   = [3,2,1,7] # S2Hand/S2Weak BAND INDICES OF B04,B03,B02,B08 -- S2DW ORDER R,G,B,NIR
+S1F11_CSV    = {          # HAND-LABELED SPLITS
 	'train':   'flood_train_data.csv',
 	'valid':   'flood_valid_data.csv',
 	'test':    'flood_test_data.csv',
 	'bolivia': 'flood_bolivia_data.csv'}
+S1F11_SPLITS = (*S1F11_CSV,'weak')
 
-def build_cached_s1f11(s1f11_dir,cache_dir,split,dn_offset=1000,tile=256):
+def s1f11_chips(root,split,drop_events=('Bolivia',)):
 	'''
-	Cache a hand-labeled Sen1Floods11 split in the S2DW .npy format. Bands are
-	prepared as in eval_sen1floods11.py: B04,B03,B02,B08 -> R,G,B,NIR; +dn_offset
-	(S2DW stretched 2025 L2A DNs, which carry a +1000 offset); clip at the per-chip
-	99th percentile of valid pixels and scale to 0-255; invalid pixels 0.
+	(chip ids, image path fn, label path fn) of a Sen1Floods11 split under root (the
+	v1.1 directory). Hand splits read the split CSV; 'weak' is every chip that has
+	both S2Weak imagery and an S2IndexLabelWeak label, minus the events in
+	drop_events (Bolivia by default: it is the held-out test event).
+	'''
+	events = f"{root}/data/flood_events"
+	if split in S1F11_CSV:
+		base = f"{events}/HandLabeled"
+		# CSV ROWS ARE "<id>_S1Hand.tif,<id>_LabelHand.tif" WITH CRLF ENDINGS
+		with open(f"{root}/splits/flood_handlabeled/{S1F11_CSV[split]}",'r') as fp:
+			chips = [l.strip().split(',')[0].replace('_S1Hand.tif','') for l in fp if l.strip()]
+		return chips,(lambda c: f"{base}/S2Hand/{c}_S2Hand.tif"),(lambda c: f"{base}/LabelHand/{c}_LabelHand.tif")
+
+	assert split == 'weak', f"split must be one of {S1F11_SPLITS}, got {split}"
+	base = next((f"{events}/{d}" for d in ('WeaklyLabeled','WeakLabeled') if os.path.isdir(f"{events}/{d}")),None)
+	assert base is not None, f"No WeaklyLabeled directory under {events}"
+	imgs  = {f[:-len('_S2Weak.tif')] for f in os.listdir(f"{base}/S2Weak") if f.endswith('_S2Weak.tif')}
+	lbls  = {f[:-len('_S2IndexLabelWeak.tif')] for f in os.listdir(f"{base}/S2IndexLabelWeak") if f.endswith('_S2IndexLabelWeak.tif')}
+	if imgs != lbls:
+		print(f"[s1f11 weak] {len(imgs ^ lbls)} chips have only an image or only a label; skipped")
+	chips = sorted(c for c in imgs & lbls if c.split('_')[0] not in drop_events)
+	return chips,(lambda c: f"{base}/S2Weak/{c}_S2Weak.tif"),(lambda c: f"{base}/S2IndexLabelWeak/{c}_S2IndexLabelWeak.tif")
+
+
+def build_cached_s1f11(s1f11_dir,cache_dir,split,dn_offset=1000,tile=256,drop_events=('Bolivia',)):
+	'''
+	Cache a Sen1Floods11 split in the S2DW .npy format. split is one of
+	train, valid, test, bolivia (S2Hand + LabelHand) or weak (S2Weak +
+	S2IndexLabelWeak, minus drop_events). Both image sets are L1C, 13 bands
+	B1..B8,B8A,B9..B12 (S2Hand int16 band-first, S2Weak uint16 pixel-interleaved);
+	both label sets are -1 no data, 0 land, 1 water.
+	Bands are prepared as: B04,B03,B02,B08 -> R,G,B,NIR +dn_offset (S2DW stretched 2025 L2A DNs,
+	which carry a +1000 offset).
+	clip at the per-chip 99th percentile of valid pixels and scale to 0-255. invalid pixels 0.
+	Must match eval_sen1floods11.to_s2dw_bytes().
 	Each 512x512 chip becomes (512/tile)^2 tiles, row-major. Writes:
 		{cache_dir}/s1f11_{split}_bands.npy  uint8 [N,4,tile,tile]
 		{cache_dir}/s1f11_{split}_masks.npy  uint8 [N,tile,tile]  0 land, 255 water,
-		                                     S1F11_IGNORE where LabelHand is -1 or a band is 0
+		                                     S1F11_IGNORE where the label is -1 or a band is 0
 		{cache_dir}/s1f11_{split}_ids.txt    one tile per line: <chip id>_<row>_<col>
-	split is one of train, valid, test, bolivia. Chips with < 100 valid pixels are
-	kept as all-ignore tiles so the ids stay complete. Load with
-	load_cached_split(cache_dir,f"s1f11_{split}").
+	Chips with < 100 valid pixels are kept as all-ignore tiles so the ids stay
+	complete. Load with load_cached_split(cache_dir,f"s1f11_{split}").
 	'''
 	root = s1f11_dir.rstrip('/')
 	if os.path.isdir(f"{root}/v1.1"):
 		root = f"{root}/v1.1"
-	assert os.path.isdir(f"{root}/splits/flood_handlabeled"), f"No splits/flood_handlabeled under {root}"
-	base = f"{root}/data/flood_events/HandLabeled"
-
-	# CHIP IDS (e.g. Ghana_313799): CSV ROWS ARE "<id>_S1Hand.tif,<id>_LabelHand.tif" WITH CRLF ENDINGS
-	with open(f"{root}/splits/flood_handlabeled/{S1F11_CSV[split]}",'r') as fp:
-		chips = [l.strip().split(',')[0].replace('_S1Hand.tif','') for l in fp if l.strip()]
+	assert os.path.isdir(f"{root}/data/flood_events"), f"No data/flood_events under {root}"
+	chips,img_path,lbl_path = s1f11_chips(root,split,drop_events)
+	assert chips, f"No chips found for split {split} under {root}"
 
 	CHIP = 512
 	assert CHIP % tile == 0, f"tile {tile} does not divide {CHIP}"
@@ -97,12 +131,13 @@ def build_cached_s1f11(s1f11_dir,cache_dir,split,dn_offset=1000,tile=256):
 	mask = np.lib.format.open_memmap(f"{pfx}_masks.npy",mode='w+',dtype=np.uint8,shape=(n,tile,tile))
 
 	ids,n_empty,n_px = [],0,np.zeros(3,np.int64) # n_px: LAND, WATER, IGNORED
+	t0 = time.time()
 	for i,cid in enumerate(chips):
-		s2  = tiff.imread(f"{base}/S2Hand/{cid}_S2Hand.tif")                   # int16, 13 BANDS
-		if s2.shape[0] != 13: # PIXEL-INTERLEAVED FILE -> BAND FIRST
+		s2  = tiff.imread(img_path(cid))                # 13 BANDS
+		if s2.shape[0] != 13: # PIXEL-INTERLEAVED FILE (S2Weak) -> BAND FIRST
 			s2 = np.moveaxis(s2,-1,0)
-		lbl = np.squeeze(tiff.imread(f"{base}/LabelHand/{cid}_LabelHand.tif")) # -1/0/1
-		assert s2.shape[1:] == lbl.shape == (CHIP,CHIP), f"{cid}: unexpected shape {s2.shape} / {lbl.shape}"
+		lbl = np.squeeze(tiff.imread(lbl_path(cid)))    # -1/0/1
+		assert s2.shape == (13,CHIP,CHIP) and lbl.shape == (CHIP,CHIP), f"{cid}: unexpected shape {s2.shape} / {lbl.shape}"
 
 		valid = (lbl != -1) & np.all(s2[S1F11_RGBN] > 0,axis=0)
 		img   = np.zeros((4,CHIP,CHIP),np.uint8)
@@ -125,6 +160,8 @@ def build_cached_s1f11(s1f11_dir,cache_dir,split,dn_offset=1000,tile=256):
 				vnir[j] = img[:,r*tile:(r+1)*tile,c*tile:(c+1)*tile]
 				mask[j] = lbl8[r*tile:(r+1)*tile,c*tile:(c+1)*tile]
 				ids.append(f"{cid}_{r}_{c}")
+		if (i+1) % 500 == 0:
+			print(f"[s1f11 {split}] {i+1}/{len(chips)} chips ({time.time()-t0:.0f} s)",flush=True)
 
 	for arr in (vnir,mask):
 		arr.flush()
@@ -132,8 +169,10 @@ def build_cached_s1f11(s1f11_dir,cache_dir,split,dn_offset=1000,tile=256):
 		fp.write('\n'.join(ids))
 
 	land,water,ign = n_px
+	events = sorted({c.split('_')[0] for c in chips})
 	print(f"[s1f11 {split}] {len(chips)} chips -> {n} tiles ({n_empty} chips with no valid pixels) | "
 		f"pixels: land {land}, water {water} ({water/max(land+water,1):.1%} of valid), ignored {ign}")
+	print(f"[s1f11 {split}] events: {', '.join(events)}")
 	print(f"Cached bands written to {pfx}_bands.npy")
 	print(f"Cached labels written to {pfx}_masks.npy")
 
@@ -340,14 +379,21 @@ class GPUValidationTransform(torch.nn.Module):
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
-	parser.add_argument('--data-dir',required=True,help='Directory of chip dataset')
+	parser.add_argument('--data-dir',help='Directory of S2DW chip dataset (the _sorted dir)')
+	parser.add_argument('--s1f11-dir',help='Sen1Floods11 root (the v1.1 dir or its parent)')
+	parser.add_argument('--s1f11-splits',nargs='+',default=list(S1F11_SPLITS),choices=S1F11_SPLITS,
+		help='Sen1Floods11 splits to cache (default: all)')
 	parser.add_argument('--cache-dir',required=True,help='Directory of output .npy cached datasets')
 	args = parser.parse_args()
-	args.data_dir = args.data_dir.rstrip('/')
+	assert args.data_dir or args.s1f11_dir, 'Give --data-dir and/or --s1f11-dir'
 	args.cache_dir = args.cache_dir.rstrip('/')
-	splits = ("training","validation","testing")
-	for s in splits:
-		build_cached_dataset(args.data_dir,args.cache_dir,s)
+	os.makedirs(args.cache_dir,exist_ok=True)
+	if args.data_dir:
+		for s in ("training","validation","testing"):
+			build_cached_dataset(args.data_dir.rstrip('/'),args.cache_dir,s)
+	if args.s1f11_dir:
+		for s in args.s1f11_splits:
+			build_cached_s1f11(args.s1f11_dir,args.cache_dir,s)
 
 
 class S1F11FastDataset(torch.utils.data.Dataset):

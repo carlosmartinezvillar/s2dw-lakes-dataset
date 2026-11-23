@@ -133,7 +133,9 @@ def load_model(args,device):
 	ckpt  = torch.load(args.checkpoint,map_location='cpu')
 	state = {k.removeprefix('_orig_mod.'): v for k,v in ckpt['model_state_dict'].items()}
 	net.load_state_dict(state)
-	return net.to(device).eval(), HP
+	print(f"Model: id {HP['id']} {HP['encoder']}-{HP['decoder']} cnn={HP['cnn_layers']} vit={HP['vit_layers']} "
+		f"C={HP['init_chan']} | {args.checkpoint} | device {device}")
+	return net.to(device).eval()
 
 
 @torch.inference_mode()
@@ -207,47 +209,17 @@ def water_bin(frac):
 	return next(name for name,test in WATER_BINS if test(frac))
 
 ################################################################################
-# MAIN
+# EVALUATION + OUTPUT
 ################################################################################
-def parse_args():
-	parser = argparse.ArgumentParser(description="Zero-shot S2DW model + NDWI evaluation on Sen1Floods11 hand labels.")
-	parser.add_argument('--s1f11-dir',required=True,help="Sen1Floods11 root (the v1.1 folder, or its parent).")
-	parser.add_argument('--checkpoint',required=True,help="train.py checkpoint (.pth.tar).")
-	parser.add_argument('-p','--params',required=True,help="Hyperparameter JSON lines file the model was trained from.")
-	parser.add_argument('--id',type=int,default=None,help="Row id in --params (default: parsed from the checkpoint name).")
-	parser.add_argument('--bands',type=int,default=4,choices=[3,4],help="Model input bands: 4 = RGB+NIR (train.py), 3 = RGB.")
-	parser.add_argument('--splits',nargs='+',default=['test','bolivia'],choices=list(SPLIT_CSV),
-		help="Hand-labeled splits to evaluate (default: test bolivia). The model never saw any of them.")
-	parser.add_argument('--ndwi-threshold',type=float,default=None,help="Extra NDWI threshold to report (e.g. fit on S2DW).")
-	parser.add_argument('--dn-offset',type=float,default=1000,help="Added to S2Hand DNs before the stretch (default 1000, see docstring).")
-	parser.add_argument('--out-dir',default='./s1f11_eval',help="Output directory for the .tsv files.")
-	parser.add_argument('--device',default=None,help="torch device (default: cuda if available, else cpu).")
-	args = parser.parse_args()
-
-	root = args.s1f11_dir.rstrip('/')
-	if os.path.isdir(f"{root}/v1.1"):
-		root = f"{root}/v1.1"
-	assert os.path.isdir(f"{root}/splits/flood_handlabeled"), f"No splits/flood_handlabeled under {root}"
-	args.s1f11_dir = root
-
-	assert os.path.isfile(args.checkpoint), f"Checkpoint not found: {args.checkpoint}"
-	assert os.path.isfile(args.params), f"Params file not found: {args.params}"
-	if args.id is None: # best_007_e42.pth.tar / chkp_007_e42.pth.tar -> 7
-		args.id = int(os.path.basename(args.checkpoint).split('_')[1])
-	args.device = torch.device(args.device or ('cuda' if torch.cuda.is_available() else 'cpu'))
-	return args
-
-
-if __name__ == '__main__':
-	args = parse_args()
-	os.makedirs(args.out_dir,exist_ok=True)
-
-	net,HP = load_model(args,args.device)
-	print(f"Model: id {HP['id']} {HP['encoder']}-{HP['decoder']} cnn={HP['cnn_layers']} vit={HP['vit_layers']} "
-		f"C={HP['init_chan']} | {args.checkpoint} | device {args.device}")
-
+def evaluate(net,args):
+	'''
+	Scores the model and the NDWI baselines on every chip of args.splits.
+	Returns the per-chip records, the pooled confusions keyed by
+	(split, group, method) with group = 'all', an event or a water bin, and the
+	list of methods.
+	'''
 	methods = ['model','ndwi>=0'] + ([f'ndwi>={args.ndwi_threshold:g}'] if args.ndwi_threshold is not None else []) + ['ndwi-otsu']
-	pooled  = {}  # (split, group, method) -> confusion; group = 'all' OR EVENT NAME
+	pooled  = {}
 	records = []
 
 	for split in args.splits:
@@ -285,10 +257,16 @@ if __name__ == '__main__':
 				rec[f'iou1:{m}'] = metrics(c)['iou1']
 			records.append(rec)
 
-	# SUMMARY ROWS -- POOLED IoU + MEAN OF PER-CHIP IoU
-	# GROUPS: 'all', EACH WATER-FRACTION BIN, EACH EVENT
+	return records,pooled,methods
+
+
+def summarize(records,pooled,methods,splits):
+	'''
+	One row per (split, group, method): pooled metrics + mean of per-chip IoU.
+	Groups: 'all', each water-fraction bin, each event.
+	'''
 	rows = []
-	for split in args.splits:
+	for split in splits:
 		groups = ['all'] + [b for b,_ in WATER_BINS] + sorted({r['event'] for r in records if r['split'] == split})
 		for g in groups:
 			recs = [r for r in records if r['split'] == split and r['status'] == 'ok'
@@ -300,21 +278,31 @@ if __name__ == '__main__':
 				rows.append({'split': split, 'group': g, 'method': m, 'chips': len(recs),
 					'pixels': int(pooled[(split,g,m)].sum()), **metrics(pooled[(split,g,m)]),
 					'chip_mean_iou1': float(np.mean(per_chip)) if per_chip else float('nan')})
+	return rows
 
+
+def write_tsv(path,rows,cols):
 	fmt = lambda v: f"{v:.5f}" if isinstance(v,float) else str(v)
-	cols = ['split','group','method','chips','pixels','iou1','iou0','ppv1','tpr1','acc','chip_mean_iou1']
-	with open(f"{args.out_dir}/s1f11_summary.tsv",'w') as fp:
+	with open(path,'w') as fp:
 		fp.write('\t'.join(cols)+'\n')
 		for r in rows:
-			fp.write('\t'.join(fmt(r[c]) for c in cols)+'\n')
+			fp.write('\t'.join(fmt(r.get(c,'')) for c in cols)+'\n')
 
-	ccols = ['split','chip','event','status','valid_frac','water_frac','water_bin','bright_frac','otsu_t'] + [f'iou1:{m}' for m in methods]
-	with open(f"{args.out_dir}/s1f11_chips.tsv",'w') as fp:
-		fp.write('\t'.join(ccols)+'\n')
-		for r in records:
-			fp.write('\t'.join(fmt(r.get(c,'')) for c in ccols)+'\n')
 
-	# STDOUT -- SPLIT TOTALS, THEN WATER-FRACTION GROUPS
+def write_results(out_dir,rows,records,methods):
+	'''
+	s1f11_summary.tsv (summarize() rows) and s1f11_chips.tsv (one row per chip).
+	'''
+	write_tsv(f"{out_dir}/s1f11_summary.tsv",rows,
+		['split','group','method','chips','pixels','iou1','iou0','ppv1','tpr1','acc','chip_mean_iou1'])
+	write_tsv(f"{out_dir}/s1f11_chips.tsv",records,
+		['split','chip','event','status','valid_frac','water_frac','water_bin','bright_frac','otsu_t'] + [f'iou1:{m}' for m in methods])
+
+
+def print_results(rows,records,out_dir):
+	'''
+	Stdout: split totals, then the water-fraction groups.
+	'''
 	header = f"{'split':<9}{'group':<13}{'method':<14}{'chips':>6}{'IoU_1':>9}{'IoU_0':>9}{'PPV_1':>9}{'TPR_1':>9}{'chipIoU':>9}"
 	for title,keep in (("ALL CHIPS",lambda g: g == 'all'),
 			("BY WATER FRACTION (S2DW chips are all 25-75%)",lambda g: g.startswith('water'))):
@@ -326,4 +314,45 @@ if __name__ == '__main__':
 	skipped = sum(r['status'] != 'ok' for r in records)
 	if skipped:
 		print(f"\n{skipped} chip(s) had no valid pixels and were skipped.")
-	print(f"\nPer-event results in {args.out_dir}/s1f11_summary.tsv; per-chip in {args.out_dir}/s1f11_chips.tsv")
+	print(f"\nPer-event results in {out_dir}/s1f11_summary.tsv; per-chip in {out_dir}/s1f11_chips.tsv")
+
+################################################################################
+# MAIN
+################################################################################
+def parse_args():
+	parser = argparse.ArgumentParser(description="Zero-shot S2DW model + NDWI evaluation on Sen1Floods11 hand labels.")
+	parser.add_argument('--s1f11-dir',required=True,help="Sen1Floods11 root (the v1.1 folder, or its parent).")
+	parser.add_argument('--checkpoint',required=True,help="train.py checkpoint (.pth.tar).")
+	parser.add_argument('-p','--params',required=True,help="Hyperparameter JSON lines file the model was trained from.")
+	parser.add_argument('--id',type=int,default=None,help="Row id in --params (default: parsed from the checkpoint name).")
+	parser.add_argument('--bands',type=int,default=4,choices=[3,4],help="Model input bands: 4 = RGB+NIR (train.py), 3 = RGB.")
+	parser.add_argument('--splits',nargs='+',default=['test','bolivia'],choices=list(SPLIT_CSV),
+		help="Hand-labeled splits to evaluate (default: test bolivia). The model never saw any of them.")
+	parser.add_argument('--ndwi-threshold',type=float,default=None,help="Extra NDWI threshold to report (e.g. fit on S2DW).")
+	parser.add_argument('--dn-offset',type=float,default=1000,help="Added to S2Hand DNs before the stretch (default 1000, see docstring).")
+	parser.add_argument('--out-dir',default='./s1f11_eval',help="Output directory for the .tsv files.")
+	parser.add_argument('--device',default=None,help="torch device (default: cuda if available, else cpu).")
+	args = parser.parse_args()
+
+	root = args.s1f11_dir.rstrip('/')
+	if os.path.isdir(f"{root}/v1.1"):
+		root = f"{root}/v1.1"
+	assert os.path.isdir(f"{root}/splits/flood_handlabeled"), f"No splits/flood_handlabeled under {root}"
+	args.s1f11_dir = root
+
+	assert os.path.isfile(args.checkpoint), f"Checkpoint not found: {args.checkpoint}"
+	assert os.path.isfile(args.params), f"Params file not found: {args.params}"
+	if args.id is None: # best_007_e42.pth.tar / chkp_007_e42.pth.tar -> 7
+		args.id = int(os.path.basename(args.checkpoint).split('_')[1])
+	args.device = torch.device(args.device or ('cuda' if torch.cuda.is_available() else 'cpu'))
+	os.makedirs(args.out_dir,exist_ok=True)
+	return args
+
+
+if __name__ == '__main__':
+	args = parse_args()
+	net  = load_model(args,args.device)
+	records,pooled,methods = evaluate(net,args)
+	rows = summarize(records,pooled,methods,args.splits)
+	write_results(args.out_dir,rows,records,methods)
+	print_results(rows,records,args.out_dir)
