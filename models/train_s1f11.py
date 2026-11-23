@@ -17,6 +17,8 @@ Hyperparameter rows (JSON lines, one run per line) take train.py's fields plus:
 	                 checkpoints). eval_sen1floods11.py reads the same field.
 	init_checkpoint  (optional) .pth.tar whose weights initialize the model (same
 	                 architecture). --init-checkpoint overrides it.
+	warmup_epochs    (optional, default 10 as in train.py) linear LR warmup length.
+	                 experiments.py sets hand 1500 epochs (150 warmup), weak 100 (10).
 The number of hand-labeled chips (k) is not a JSON hyperparameter: rows with 'k' or
 'subset_seed' are rejected. Training on k-chip subsets is left to a separate
 train-and-validate loop (several k per run); select_tiles() already draws them.
@@ -284,6 +286,7 @@ def load_hyperparameters(args):
 
 	# OPTIONAL FIELDS
 	HP['init_checkpoint'] = args.init_checkpoint or HP.get('init_checkpoint')
+	HP['warmup_epochs']   = HP.get('warmup_epochs',10)
 
 	# CHECK DICT
 	try:
@@ -304,6 +307,8 @@ def load_hyperparameters(args):
 		if HP['init_checkpoint'] is None: # FROM SCRATCH: NORMALIZE WITH THE TRAINING SET'S OWN STATS
 			assert HP['mean_stdd'] == HP['train_set'], \
 				f"From scratch, mean_stdd ({HP['mean_stdd']}) must match train_set ({HP['train_set']})"
+		assert 0 < HP['warmup_epochs'] < HP['epochs'], \
+			f"warmup_epochs ({HP['warmup_epochs']}) must be in (0, epochs={HP['epochs']})"
 		for key in ('k','subset_seed'): # CHIP SUBSETS ARE NOT SET PER ROW (SEE MODULE DOCSTRING)
 			assert key not in HP, f"'{key}' is not a JSON hyperparameter for train_s1f11.py; remove it from the row"
 
@@ -539,7 +544,7 @@ if __name__ == "__main__":
 
 	#---------- LOAD AND PARSE HYPERPARAMETER DICT ------------------------------------------------
 	HP = load_hyperparameters(args)
-	print(f"Run id {HP['id']}: train_set {HP['train_set']} | seed {HP['seed']} | "
+	print(f"Run id {HP['id']}: train_set {HP['train_set']} | epochs {HP['epochs']} (warmup {HP['warmup_epochs']}) | seed {HP['seed']} | "
 		f"normalization {HP['mean_stdd']} | init {HP['init_checkpoint'] or 'scratch'}")
 
 	#---------- SET SEEDS -------------------------------------------------------------------------
@@ -572,7 +577,7 @@ if __name__ == "__main__":
 	optimizer = torch.optim.AdamW(net.parameters(),lr=HP['lrate'],weight_decay=HP["decay"])
 
 	#---------- LEARNING RATE SCHEDULER ------------------------------------------------------------
-	scheduler = set_scheduler(HP['epochs'],optimizer,warmup_steps=10)
+	scheduler = set_scheduler(HP['epochs'],optimizer,warmup_steps=HP['warmup_epochs'])
 
 	#---------- DATALOADERS ------------------------------------------------------------------------
 	# Transforms (in gpu) -- 127 -> IGNORE, NORMALIZED WITH THE RUN'S mean_stdd

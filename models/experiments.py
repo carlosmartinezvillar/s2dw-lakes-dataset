@@ -78,298 +78,155 @@ def set_experiments(n=30,seed=476,path='./models/hparams/experiments_1.json'):
 				i += 1
 
 
-def set_seed_experiments(n=20,path='./hparams/experiments_2.json'):
+def set_seed_experiments(n=20,best=(0,1,2,3),path='./hparams/experiments_2.json'):
+	'''
+	Train the best model configuration for ViT-ViT, CNN-CNN, CNN-ViT, and ViT-CNN
+	over 'n' distinct seeds.
+	'''
 	seeds = list(range(476,476+n,1))
 	pass
 
 
-def stage_1():
-	# STAGE 1 -- GET BEST LEARNING RATE, BATCH SIZE, WEIGHT DECAY
+HPARAMS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),'hparams') # models/hparams, ANY CWD
 
-	# FIXED PARAMETERS
-	name = 'stage_1'
-	n_trials = 40
-	models   = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
+# (epochs, warmup_epochs) PER TRAINING SET, BATCH 32 AS IN experiments_1 (S2DW: 100, 10 =
+# 45,800 STEPS). ROUND NUMBERS NEAR S2DW'S STEP COUNT: hand 30 STEPS/EPOCH x 1500 = 45,000,
+# weak 517 x 100 = 51,700. WARMUP IS 10% OF EPOCHS IN ALL THREE.
+S1F11_EPOCHS = {
+	'hand': (1500,150),
+	'weak': (100,10)}
+
+
+ARCH_KEYS = ('encoder','decoder','init_chan','cnn_layers','vit_layers') # ONE ARCHITECTURE OF THE SWEEP
+
+
+def set_s1f11_experiments(train_set,name,arch_id,source='experiments_1.json',out_dir=HPARAMS_DIR,
+		mean_stdd=None,init_checkpoint=None):
+	'''
+	Copies the rows of the S2DW sweep (source, in hparams/) that share the architecture
+	(ARCH_KEYS) of row arch_id -- the n (lrate, decay) draws of that architecture, 40 in
+	experiments_1 -- to {out_dir}/{name}.json for train_s1f11.py: same id, architecture,
+	(lrate, decay) draw, batch and seed, plus train_set and mean_stdd (from scratch, the
+	training set's own stats). Each dataset gets the same search (same draws, same budget)
+	and picks its own best on its own validation set.
+	arch_id: the best experiments_1 id (selected on S2DW validation, like arm A), or a
+	list of ids to keep several architectures (e.g. the best of each encoder-decoder family).
+	mean_stdd, init_checkpoint: for fine-tuning (set_pretrained_experiments); by default
+	the rows train from scratch with mean_stdd = train_set.
+	epochs and warmup_epochs come from S1F11_EPOCHS: hand 1500 (150 warmup), weak 100
+	(10 warmup), vs S2DW 100 (10).
+	No 'k' (train_s1f11.py rejects it) and no init_checkpoint (models train from scratch).
+	Ids repeat across files: write each file's checkpoints/logs to their own directory.
+	'''
+	assert train_set in ('hand','weak'), f"train_set must be 'hand' or 'weak', got {train_set}"
+	assert (mean_stdd is None) == (init_checkpoint is None), "mean_stdd and init_checkpoint go together (fine-tuning)"
+	mean_stdd = mean_stdd or train_set
+	with open(os.path.join(HPARAMS_DIR,source),'r') as fp:
+		base = [json.loads(line) for line in fp if line.strip()]
+	by_id = {r['id']: r for r in base}
+	assert len(by_id) == len(base), f"duplicate ids in {source}"
+
+	# ARCHITECTURES TO KEEP
+	arch_ids = [arch_id] if isinstance(arch_id,int) else list(arch_id)
+	assert arch_ids, "arch_id is empty"
+	for i in arch_ids:
+		assert i in by_id, f"arch_id {i} not in {source}"
+	archs = {tuple(by_id[i][k] for k in ARCH_KEYS) for i in arch_ids}
 
 	rows = []
-	for i,m in enumerate(models):
+	for r in base:
+		if tuple(r[k] for k in ARCH_KEYS) not in archs:
+			continue
+		assert 'train_set' not in r and 'mean_stdd' not in r, f"{source} id {r['id']} is not an S2DW (train.py) row"
+		epochs,warmup = S1F11_EPOCHS[train_set]
+		row = {**r,'epochs': epochs,'warmup_epochs': warmup,'train_set': train_set,'mean_stdd': mean_stdd}
+		if init_checkpoint is not None:
+			row['init_checkpoint'] = init_checkpoint
+		rows.append(row)
 
-		# SEARCH
-		lrate = 10**np.random.uniform(-5,-2,size=n_trials)
-		decay = 10**np.random.uniform(-4,-2,size=n_trials)
-		batch = np.random.choice([8,16],size=n_trials)
-
-		for j in range(n_trials):
-			model_id = i*n_trials+j
-			sample = {
-				'id':model_id,
-				'model':m,
-				'seed':476,
-				'epochs':35,
-				'scheduler':"cos",
-				'eta_min':0.0,
-				'cycles': 1,
-				'loss':"ce",
-				'bands':3,
-				'labels':2,
-				'optim':"adamw",
-				'lrate':round(lrate[j],5),
-				'decay':round(decay[j],5),
-				'batch':int(batch[j]),					
-				'vit_layers':1, #base
-				'mlp_ratio':5, #base
-				'cnn_layers':2, #base
-				'channels':32   #base
-			}
-
-			rows.append(sample)
-
-	# write to ./hparams/stage_1.json
-	write_hp_file(name,rows)
+	for a in sorted(archs):
+		n = sum(tuple(r[k] for k in ARCH_KEYS) == a for r in rows)
+		print(f"[{name}] {dict(zip(ARCH_KEYS,a))}: {n} rows")
+	write_hp_file(name,rows,out_dir)
+	return rows
 
 
-def stage_2():
+def set_s2weak_experiments(arch_id,name='experiments_s2weak',source='experiments_1.json'):
 	'''
-	STAGE 2 -- BEST LEARNING RATE, WEIGHT DECAY ACROSS SEEDS
+	Train UNet models on the 'S2 weakly labeled' data of Sen1Floods11 (arm C: S2Weak +
+	S2IndexLabelWeak, Bolivia removed), from scratch: the architecture of source row
+	arch_id with its (lrate, decay) draws from the S2DW sweep.
 	'''
-
-	# FIXED PARAMETERS
-	name = 'stage_2'
-	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
-	best  = [15,13,19,76,70,67,101,90,84,153,141,138] #best 3 per model from stage_1()
-
-	# SEARCH
-	seeds = [176,276,376,476,576]	
-				 
-	with open('./hparams/stage_1.json','r') as fp:
-		stage_1 = [json.loads(line) for line in fp.readlines() if line != "\n"]
-	indexed_stage_1 = {row['id']:row for row in stage_1}
-
-	# COMBINE
-	cross_product = list(itertools.product(seeds,best))
-
-	rows   = []
-	for i,(s,idx) in enumerate(cross_product):
-		sample = copy.deepcopy(indexed_stage_1[idx])
-		sample["seed"]   = s
-		sample["epochs"] = 65
-		sample["old_id"] = sample["id"]
-		sample["id"]     = i
-		rows.append(sample)
-
-	# write to ./hparams/stage_2.json
-	write_hp_file(name,rows)
+	return set_s1f11_experiments('weak',name,arch_id,source)
 
 
-def stage_3():
+def set_s2hand_experiments(arch_id,name='experiments_s2hand',source='experiments_1.json'):
 	'''
-	STAGE 3 -- CHECK SCHEDULER
+	Train UNet models on the hand-labeled training data of Sen1Floods11 (arm B, all
+	252 'train' chips), from scratch: the architecture of source row arch_id with its
+	(lrate, decay) draws from the S2DW sweep. k-chip subsets are trained by a separate
+	loop in train_s1f11.py.
 	'''
-
-	# FIXED PARAMETERS
-	name = 'stage_3'
-
-	#BEST MODELS FOR EACH IN STAGE 1 & 2: 19,76,84,138 
-	# 19: "lrate": 0.00022, "decay": 0.00837
-	# 76: "lrate": 0.0002, "decay": 0.00055
-	# 84: "lrate": 0.0002, "decay": 0.00786
-	# 138: "lrate": 0.00019, "decay": 0.00114
-	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
-	bestlr = [0.00022,0.0002,0.0002,0.00019]
-	bestwd = [0.00837,0.00055,0.00786,0.00114]
-
-	# SEARCH
-	all_eta_min = [0.0,1e-6,1e-5]
-	all_cycles  = [1,2,3]
-
-	# COMBINE
-	cross_product = list(itertools.product(models,all_eta_min,all_cycles))
-
-	rows = []
-	for i,combination in enumerate(cross_product):
-
-		model   = combination[0]
-		eta_min = combination[1]
-		cycles  = combination[2]
-
-		lr = bestlr[models.index(model)]
-		wd = bestwd[models.index(model)]
-
-		sample = {
-			'id':i,
-			'model':model,
-			'seed':476,
-			'epochs':65,
-			'scheduler':"cos",
-			'eta_min':eta_min,
-			'cycles': cycles,
-			'loss':"ce",
-			'bands':3,
-			'labels':2,
-			'optim':"adamw",
-			'lrate':lr,
-			'decay':wd,
-			'batch':16,
-			'vit_layers':1,
-			'mlp_ratio':5,
-			'cnn_layers':2,
-			'channels':32
-		}
-		rows.append(sample)
-
-	# CHECK HIGHER DECAY -- Specially for CNN encoders
-	# all_eta_min = [0.0]
-	all_cycles  = [1,2,3]
-	bestlr = 0.0002
-	cnn_wd = [0.01,0.05,0.1]
-	vit_wd = [0.001,0.005,0.01]
-	first_new_id = len(cross_product) #append to previous
-	cross_product = list(itertools.product(["UNet_CNN_CNN","UNet_CNN_ViT"],all_cycles,cnn_wd))
-	cross_product += list(itertools.product(["UNet_ViT_CNN","UNet_ViT_ViT"],all_cycles,vit_wd))
-
-	for i,(model,cycles,wd) in enumerate(cross_product):
-
-		sample = {
-			'id':i+first_new_id,
-			'model':model,
-			'seed':476,
-			'epochs':65,
-			'scheduler':"cos",
-			'eta_min':0.0,
-			'cycles': cycles,
-			'loss':"ce",
-			'bands':3,
-			'labels':2,
-			'optim':"adamw",
-			'lrate':bestlr,
-			'decay':wd,
-			'batch':16,
-			'vit_layers':1,
-			'mlp_ratio':5,
-			'cnn_layers':2,
-			'channels':32
-		}
-		rows.append(sample)
+	return set_s1f11_experiments('hand',name,arch_id,source)
 
 
-	# write to ./hparams/stage_3.json
-	write_hp_file(name,rows)
+PRETRAIN_STATS = { # PRETRAINING DATA -> NORMALIZATION ITS CHECKPOINTS WERE TRAINED WITH
+	's2dw': 's2dw',     # train.py (experiments_1)
+	'weak': 'weak'}     # train_s1f11.py (experiments_s2weak)
 
 
-def stage_4():
+def set_pretrained_experiments(arch_id,pretrain,init_checkpoint,finetune='hand',name=None,source='experiments_1.json'):
 	'''
-	STAGE 4 -- PARAMETER SIZE: CHANNELS x DEPTH SIZE
-	variations = [UNet_CNN_CNN,UNet_ViT_CNN,UNet_CNN_ViT,UNet_ViT_ViT]
-	tiny  = {'cnn_layers':2,'vit_layers':1,'channels':16,'mlp_ratio':5}
-	small = {'cnn_layers':3,'vit_layers':2,'channels':16,'mlp_ratio':5}
-	base  = {'cnn_layers':2,'vit_layers':1,'channels':32,'mlp_ratio':5}
-	large = {'cnn_layers':3,'vit_layers':2,'channels':32,'mlp_ratio':5}
-	'''	
+	Fine tune on hand-labeled data (or weakly-labeled S2) starting from
+	a previously trained S2DW or S2Weak checkpoint.
 
-	# FIXED PARAMETERS
-	name = 'stage_4'
-	models = ["UNet_CNN_CNN","UNet_ViT_CNN","UNet_CNN_ViT","UNet_ViT_ViT"]
-	bestlr = 0.0002
-	bestwd = [0.008,0.005,0.008,0.01]
-	best_eta_min = 0.0
-	best_cycles  = 1	
+	Pre    -> Fine-tune    -> Test
+	--------------------------------------
+	S2DW   -> Hand-labeled -> Hand-labeled   arm D:          pretrain='s2dw', finetune='hand'
+	S2Weak -> Hand-labeled -> Hand-labeled   C, fine-tuned:  pretrain='weak', finetune='hand'
+	S2DW   -> S2Weak       -> Hand-labeled   (optional)      pretrain='s2dw', finetune='weak'
 
-	# SEARCH
-	cnn_layers = [2,3] # follows vit_layers = [1,2]
-	channels   = [16,32]
-	
-	# COMBINE
-	cross_product = list(itertools.product(models,channels,cnn_layers)) #16 combinations
-
-	rows = []
-	for i,(model,channels,cnn_layers) in enumerate(cross_product):
-
-		if cnn_layers == 3:
-			vit_layers = 2
-		else:
-			vit_layers = 1
-
-		lr = bestlr
-		wd = bestwd[models.index(model)]
-		s_min = best_eta_min
-		s_cyc = best_cycles
-
-		sample = {
-			'id':i,
-			'model':model,
-			'seed':476,
-			'epochs':100,
-			'scheduler':"cos",
-			'eta_min': s_min,
-			'cycles': s_cyc,
-			'loss':"ce",
-			'bands':3,
-			'labels':2,
-			'optim':"adamw",
-			'lrate':lr,
-			'decay':wd,
-			'batch':16,
-			'vit_layers':vit_layers,
-			'mlp_ratio':5,
-			'cnn_layers':cnn_layers, 
-			'channels':channels  
-		}
-		rows.append(sample)
-
-	write_hp_file(name,rows)
-
-
-def stage_5():
+	Same rows as the from-scratch sweep on the fine-tuning data (set_s2hand_experiments /
+	set_s2weak_experiments with the same arch_id): same ids, architecture, (lrate, decay)
+	draws, epochs, batch and seed, so fine-tuned and from-scratch runs differ only in
+	the initial weights. Adds init_checkpoint and mean_stdd = the pretraining's stats
+	(train_s1f11.py checks them against the checkpoint).
+	arch_id         : the architecture (an experiments_1 id), as in the other sweeps.
+	init_checkpoint : the pretrained best_{id:03}_e{epoch:02}.pth.tar as the training pod sees
+	                  it (e.g. /model_pvc/experiments_1/best_007_e42.pth.tar). Its id must
+	                  have arch_id's architecture.
+	name            : default experiments_{s2dw|s2weak}_{s2hand|s2weak}.
 	'''
-	STAGE 5 -- CNN STEM+PATCHING VS PREVIOUS <<<- add CNN2 !
-	'''
+	assert pretrain in PRETRAIN_STATS, f"pretrain must be one of {list(PRETRAIN_STATS)}, got {pretrain}"
+	assert finetune in ('hand','weak'), f"finetune must be 'hand' or 'weak', got {finetune}"
+	assert pretrain != finetune, f"pretrain and finetune are both '{pretrain}'"
+	assert isinstance(arch_id,int), "one architecture: the pretrained checkpoint has a single one"
+	assert init_checkpoint, "init_checkpoint is required"
 
-	# FIXED PARAMETERS
-	name = 'stage_5'
-	bestlr = 0.0002
-	bestwd = [1,1,1,1]
-	best_eta_min = [0,0,0,0]
-	best_cycles  = [1,1,1,1]
+	# THE CHECKPOINT'S RUN (ID IN ITS NAME, SAME IDS IN ALL SWEEP FILES) MUST HAVE arch_id's ARCHITECTURE
+	with open(os.path.join(HPARAMS_DIR,source),'r') as fp:
+		by_id = {r['id']: r for r in (json.loads(line) for line in fp if line.strip())}
+	assert arch_id in by_id, f"arch_id {arch_id} not in {source}"
+	try:
+		ckpt_id = int(os.path.basename(init_checkpoint).split('_')[1]) # best_007_e42.pth.tar -> 7
+	except (IndexError,ValueError):
+		ckpt_id = None
+		print(f"WARNING: no run id in {init_checkpoint} (expected best_{{id:03}}_e{{epoch:02}}.pth.tar); architecture not checked")
+	if ckpt_id is not None:
+		assert ckpt_id in by_id, f"{init_checkpoint}: id {ckpt_id} not in {source}"
+		arch = lambda i: {k: by_id[i][k] for k in ARCH_KEYS}
+		assert arch(ckpt_id) == arch(arch_id), \
+			f"{init_checkpoint} (id {ckpt_id}) is {arch(ckpt_id)}, arch_id {arch_id} is {arch(arch_id)}"
 
-	# SEARCH
-	models = ["UNet_ViT2_CNN","UNet_ViT2_ViT","UNet_CNN2_CNN","UNet_CNN2_ViT"]
-
-	rows = []
-	for i,m in enumerate(models):
-
-		lr = bestlr[models.index(m)]
-		wd = bestwd[models.index(m)]
-		s_min = best_eta_min[models.index(m)]
-		s_cyc = best_cycles[models.index(m)]
-
-		sample = {
-			'id':i,
-			'model':m,
-			'seed':476,
-			'epochs':65,
-			'scheduler':"cos",
-			'eta_min': s_min,
-			'cycles': s_cyc,
-			'loss':"ce",
-			'bands':3,
-			'labels':2,
-			'optim':"adamw",
-			'lrate':lr,
-			'decay':wd,
-			'batch':16,
-			'vit_layers':1,
-			'mlp_ratio':5,
-			'cnn_layers':2, 
-			'channels':16 
-		}
-		rows.append(sample)
-
-	write_hp_file(name,rows)
+	short = {'s2dw': 's2dw','hand': 's2hand','weak': 's2weak'}
+	name  = name or f"experiments_{short[pretrain]}_{short[finetune]}"
+	return set_s1f11_experiments(finetune,name,arch_id,source,
+		mean_stdd=PRETRAIN_STATS[pretrain],init_checkpoint=init_checkpoint)
 
 
-def write_hp_file(name,rows):
+def write_hp_file(name,rows,hp_dir='./hparams'):
 	# WRITE JSON FILE
-	out_file_path = f"./hparams/{name}.json"		
+	out_file_path = f"{hp_dir}/{name}.json"		
 	with open(out_file_path,'w') as fp:
 		for line in rows:
 			json.dump(line,fp)
@@ -379,9 +236,25 @@ def write_hp_file(name,rows):
 
 if __name__ == '__main__':
 	# set_seed(476) #Set seed to fix list of hyperparameters
-	# stage_1()
-	# stage_2()
-	# stage_3()
-	# stage_4()
-	
-	set_experiments(n=40,seed=476)
+
+	# S2DW SWEEP (experiments_1.json). ITS DRAWS ARE NOT SEEDED (set_seed ABOVE IS
+	# COMMENTED OUT): RERUNNING IT OVERWRITES THE BASELINE WITH DIFFERENT (lrate, decay)
+	# set_experiments(n=40,seed=476)
+
+	# SEN1FLOODS11 SWEEPS FOR train_s1f11.py -- THE (lrate, decay) DRAWS OF ONE experiments_1
+	# ARCHITECTURE. SET BEST_ARCH_ID TO THE BEST experiments_1 ID (ON S2DW VALIDATION)
+	BEST_ARCH_ID = None
+	if BEST_ARCH_ID is None:
+		print("Set BEST_ARCH_ID in experiments.py (best experiments_1 id) to write the S2Weak/S2Hand files.")
+	else:
+		set_s2weak_experiments(BEST_ARCH_ID)
+		set_s2hand_experiments(BEST_ARCH_ID)
+
+	# # FINE-TUNING SWEEPS -- PRETRAINED CHECKPOINTS AS THE TRAINING POD SEES THEM. S2DW: THE BEST
+	# # experiments_1 RUN (= BEST_ARCH_ID'S BEST EPOCH). S2WEAK: THE BEST experiments_s2weak RUN.
+	# S2DW_CHECKPOINT   = None # e.g. '/model_pvc/experiments_1/best_007_e42.pth.tar'
+	# S2WEAK_CHECKPOINT = None # e.g. '/model_pvc/experiments_s2weak/best_012_e88.pth.tar'
+	# if BEST_ARCH_ID is not None and S2DW_CHECKPOINT is not None:
+	# 	set_pretrained_experiments(BEST_ARCH_ID,'s2dw',S2DW_CHECKPOINT,finetune='hand')   # ARM D
+	# if BEST_ARCH_ID is not None and S2WEAK_CHECKPOINT is not None:
+	# 	set_pretrained_experiments(BEST_ARCH_ID,'weak',S2WEAK_CHECKPOINT,finetune='hand') # C, FINE-TUNED
