@@ -10,7 +10,9 @@ chip is prepared to look like an S2DW chip:
 	   a +1000 offset; Sen1Floods11 (2016-2019 L1C) has none
 	3. clip each band at its 99th percentile over valid pixels, scale to 0-255
 	   (chip.py does this per Sentinel-2 scene; here it can only be per chip)
-	4. normalize with the S2DW training mean/std, split into four 256x256 tiles
+	4. normalize with the mean/std the model was trained with (--mean-stdd: s2dw for
+	   S2DW-trained and fine-tuned models, hand/weak for models trained from scratch on
+	   the Sen1Floods11 hand/weak caches), split into four 256x256 tiles
 Remaining differences: L1C (top of atmosphere) vs L2A (surface reflectance), per-chip
 vs per-scene stretch, and flood vs permanent water labels. S2Hand has no cloud mask;
 the per-chip 'bright_frac' column (blue TOA >= 0.2) is a rough proxy for filtering.
@@ -33,7 +35,9 @@ Data (only S2Hand, LabelHand and the split CSVs are needed, ~1 GB):
 
 Usage (from models/):
 	python3 eval_sen1floods11.py --s1f11-dir <root> --checkpoint <net-dir>/best_007_e42.pth.tar \
-		-p hparams/experiments_1.json [--splits test bolivia] [--ndwi-threshold T] [--out-dir DIR]
+		-p hparams/experiments_1.json [--splits test bolivia] [--ndwi-threshold T] [--out-dir DIR] \
+		[--mean-stdd {s2dw,hand,weak}]
+	--mean-stdd defaults to the 'mean_stdd' field of the hyperparameter row, else s2dw.
 '''
 import os
 import json
@@ -53,6 +57,9 @@ S2_RGBN  = [3,2,1,7]      # S2Hand BAND INDICES OF B04,B03,B02,B08 -- S2DW ORDER
 TILE     = 256            # S2DW CHIP SIZE
 N_BINS   = 2000           # NDWI HISTOGRAM BINS OVER [-1,1]
 BRIGHT   = 2000           # BLUE TOA x 10000 AT/ABOVE WHICH A PIXEL COUNTS AS 'BRIGHT'
+
+# INPUT NORMALIZATION: MUST BE THE ONE THE MODEL WAS TRAINED WITH (dataloader TRANSFORMS)
+MEAN_STDD = dataloader.S1F11_MEAN_STDD # s2dw / hand / weak -> (mean,stdd)
 
 # WATER-FRACTION GROUPS (FRACTION OF SCORED PIXELS LABELED WATER). S2DW KEEPS ONLY
 # CHIPS WITH 25-75% WATER (chip.py WATER_MIN/WATER_MAX, BOTH INCLUSIVE), SO
@@ -120,6 +127,18 @@ def load_model(args,device):
 		rows = {r['id']: r for r in (json.loads(l) for l in fp if l.strip())}
 	assert args.id in rows, f"id {args.id} not in {args.params}"
 	HP  = rows[args.id]
+
+	# NORMALIZATION: --mean-stdd, ELSE THE HPARAM ROW'S 'mean_stdd', ELSE s2dw
+	hp_norm = HP.get('mean_stdd')
+	assert hp_norm is None or hp_norm in MEAN_STDD, f"id {args.id}: unknown mean_stdd '{hp_norm}' (expected one of {list(MEAN_STDD)})"
+	if args.mean_stdd is None:
+		args.mean_stdd = hp_norm or 's2dw'
+	elif hp_norm is not None and hp_norm != args.mean_stdd:
+		print(f"WARNING: --mean-stdd {args.mean_stdd} overrides mean_stdd '{hp_norm}' of id {args.id} in {args.params}")
+	mean,stdd  = MEAN_STDD[args.mean_stdd]
+	args.mean  = mean[:args.bands].to(device)
+	args.stdd  = stdd[:args.bands].to(device)
+
 	net = models.UNet(
 		HP['id'],
 		encoder=HP['encoder'],
@@ -134,19 +153,20 @@ def load_model(args,device):
 	state = {k.removeprefix('_orig_mod.'): v for k,v in ckpt['model_state_dict'].items()}
 	net.load_state_dict(state)
 	print(f"Model: id {HP['id']} {HP['encoder']}-{HP['decoder']} cnn={HP['cnn_layers']} vit={HP['vit_layers']} "
-		f"C={HP['init_chan']} | {args.checkpoint} | device {device}")
+		f"C={HP['init_chan']} | {args.checkpoint} | device {device} | normalization {args.mean_stdd}")
 	return net.to(device).eval()
 
 
 @torch.inference_mode()
-def predict(net,img,device,n_bands):
+def predict(net,img,device,n_bands,mean,stdd):
 	'''
-	img: uint8 [4,H,W] (H,W multiples of TILE). Returns the class map [H,W].
+	img: uint8 [4,H,W] (H,W multiples of TILE). mean/stdd: [n_bands,1,1] tensors on
+	device, the normalization the model was trained with. Returns the class map [H,W].
 	'''
 	_,H,W = img.shape
 	tiles = [img[:n_bands,i:i+TILE,j:j+TILE] for i in range(0,H,TILE) for j in range(0,W,TILE)]
 	x = torch.from_numpy(np.stack(tiles)).to(device).float()
-	x = (x - dataloader.MEAN[:n_bands].to(device)) / dataloader.STDD[:n_bands].to(device)
+	x = (x - mean) / stdd
 	with torch.autocast(device_type=device.type,dtype=torch.bfloat16,enabled=device.type=='cuda'):
 		y = net(x).argmax(dim=1).cpu().numpy().astype(np.uint8)
 	out = np.zeros((H,W),np.uint8)
@@ -241,7 +261,7 @@ def evaluate(net,args):
 
 			img  = to_s2dw_bytes(s2,valid,args.dn_offset)
 			ndwi = ndwi_toa(s2)
-			preds = {'model': predict(net,img,args.device,args.bands) == 1,
+			preds = {'model': predict(net,img,args.device,args.bands,args.mean,args.stdd) == 1,
 				'ndwi>=0': ndwi >= 0}
 			if args.ndwi_threshold is not None:
 				preds[f'ndwi>={args.ndwi_threshold:g}'] = ndwi >= args.ndwi_threshold
@@ -329,6 +349,9 @@ def parse_args():
 	parser.add_argument('--splits',nargs='+',default=['test','bolivia'],choices=list(SPLIT_CSV),
 		help="Hand-labeled splits to evaluate (default: test bolivia). The model never saw any of them.")
 	parser.add_argument('--ndwi-threshold',type=float,default=None,help="Extra NDWI threshold to report (e.g. fit on S2DW).")
+	parser.add_argument('--mean-stdd',default=None,choices=list(MEAN_STDD),
+		help="Input mean/std the model was trained with: s2dw (S2DW-trained or -pretrained), hand or weak "
+		"(trained from scratch on that Sen1Floods11 cache). Default: the 'mean_stdd' field of the -p row, else s2dw.")
 	parser.add_argument('--dn-offset',type=float,default=1000,help="Added to S2Hand DNs before the stretch (default 1000, see docstring).")
 	parser.add_argument('--out-dir',default='./s1f11_eval',help="Output directory for the .tsv files.")
 	parser.add_argument('--device',default=None,help="torch device (default: cuda if available, else cpu).")

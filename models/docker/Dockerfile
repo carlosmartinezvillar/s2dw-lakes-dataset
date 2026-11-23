@@ -8,6 +8,6 @@ RUN apt-get update && apt-get install -y \
 	unzip
 
 RUN pip install -U pip \
-	&& pip install torch torchvision numpy pillow pyyaml \
+	&& pip install torch torchvision numpy pillow pyyaml tifffile imagecodecs \
 	nvitop torchprofile
 

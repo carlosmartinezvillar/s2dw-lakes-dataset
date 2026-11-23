@@ -78,7 +78,8 @@ def set_experiments(n=30,seed=476,path='./models/hparams/experiments_1.json'):
 				i += 1
 
 
-def set_seed_experiments(n=30,seed=0,path='./hparams/experiments_2.json'):
+def set_seed_experiments(n=20,path='./hparams/experiments_2.json'):
+	seeds = list(range(476,476+n,1))
 	pass
 
 

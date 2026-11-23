@@ -61,6 +61,7 @@ def load_cached_split(cache_dir,split):
 
 
 S1F11_IGNORE = 127       # SEN1FLOODS11 MASK VALUE FOR PIXELS TO IGNORE (LAND 0, WATER 255 AS IN S2DW)
+S1F11_IGNORE_INDEX = -1  # CLASS INDEX THE S1F11 GPU TRANSFORMS GIVE THOSE PIXELS (CrossEntropyLoss ignore_index)
 S1F11_RGBN   = [3,2,1,7] # S2Hand/S2Weak BAND INDICES OF B04,B03,B02,B08 -- S2DW ORDER R,G,B,NIR
 S1F11_CSV    = {          # HAND-LABELED SPLITS
 	'train':   'flood_train_data.csv',
@@ -68,6 +69,10 @@ S1F11_CSV    = {          # HAND-LABELED SPLITS
 	'test':    'flood_test_data.csv',
 	'bolivia': 'flood_bolivia_data.csv'}
 S1F11_SPLITS = (*S1F11_CSV,'weak')
+S1F11_MEAN_STDD = {       # INPUT NORMALIZATION BY THE DATA A MODEL WAS (PRE)TRAINED ON
+	's2dw': (MEAN,STDD),                       # S2DW-TRAINED (A) AND S2DW-PRETRAINED, FINE-TUNED (D)
+	'hand': (MEAN_S1F11_HAND,STDD_S1F11_HAND), # TRAINED FROM SCRATCH ON THE HAND train CACHE (B)
+	'weak': (MEAN_S1F11_WEAK,STDD_S1F11_WEAK)} # TRAINED FROM SCRATCH ON THE WEAK CACHE (C)
 
 def s1f11_chips(root,split,drop_events=('Bolivia',)):
 	'''
@@ -113,6 +118,14 @@ def build_cached_s1f11(s1f11_dir,cache_dir,split,dn_offset=1000,tile=256,drop_ev
 		{cache_dir}/s1f11_{split}_ids.txt    one tile per line: <chip id>_<row>_<col>
 	Chips with < 100 valid pixels are kept as all-ignore tiles so the ids stay
 	complete. Load with load_cached_split(cache_dir,f"s1f11_{split}").
+
+	Expected output for Sen1Floods11 v1.1, tile=256 (weak without Bolivia):
+		split    bands                      masks                   ids    chips
+		train    (1008,4,256,256) uint8     (1008,256,256) uint8    1008   252
+		valid    (356,4,256,256) uint8      (356,256,256) uint8     356    89
+		test     (360,4,256,256) uint8      (360,256,256) uint8     360    90
+		bolivia  (60,4,256,256) uint8       (60,256,256) uint8      60     15
+		weak     (16640,4,256,256) uint8    (16640,256,256) uint8   16640  4160
 	'''
 	root = s1f11_dir.rstrip('/')
 	if os.path.isdir(f"{root}/v1.1"):
@@ -377,6 +390,84 @@ class GPUValidationTransform(torch.nn.Module):
 		return x,y
 
 
+################################################################################
+# FAST DATASETS Sen1Floods11 (Loaded in RAM & using uint8 only)
+################################################################################
+class S1F11FastDataset(torch.utils.data.Dataset):
+	def __init__(self,bands_ndarray,masks_ndarray):
+		self.bands = torch.from_numpy(bands_ndarray)
+		self.masks = torch.from_numpy(masks_ndarray)
+		self.n     = self.bands.shape[0]
+
+	def __len__(self):
+		return self.n
+
+	def __getitem__(self,idx):
+		vnir = self.bands[idx]
+		mask = self.masks[idx]
+		return vnir,mask		
+
+class S1F11GPUValidationTransform(torch.nn.Module):
+	'''
+	GPU band normalization for the Sen1Floods11 caches. No augmentation.
+	Takes the uint8 batch [B,4,H,W] and uint8 mask [B,H,W] or [B,1,H,W] (0/127/255).
+	Returns the float32 image and the int64 class mask [B,H,W]: 0 land, 1 water,
+	S1F11_IGNORE_INDEX (-1) where the cache has S1F11_IGNORE (127). Pair with
+	CrossEntropyLoss(ignore_index=S1F11_IGNORE_INDEX) and leave -1 out of the metrics.
+	'''
+	def __init__(self,mean_stdd='hand'):
+		super().__init__()
+		assert mean_stdd in S1F11_MEAN_STDD, f"mean_stdd must be one of {list(S1F11_MEAN_STDD)}, got {mean_stdd}"
+		mean,stdd = S1F11_MEAN_STDD[mean_stdd]
+		self.register_buffer('mean',mean.clone())
+		self.register_buffer('stdd',stdd.clone())
+
+	@torch.no_grad()
+	def forward(self,x,y):
+		x = (x.float()-self.mean)/self.stdd
+		y = y.view(x.shape[0],*x.shape[-2:]).long() # [B,1,H,W] OR [B,H,W] -> [B,H,W]
+		ign = y == S1F11_IGNORE                      # BEFORE THE DIVISION, WHICH TURNS 127 INTO 0 (LAND)
+		y = y.div(255,rounding_mode='floor').masked_fill(ign,S1F11_IGNORE_INDEX)
+		return x,y
+
+
+class S1F11GPUTransform(torch.nn.Module):
+
+	def __init__(self,gain=0.10,mean_stdd='hand'):
+		super().__init__()
+		assert mean_stdd in S1F11_MEAN_STDD, f"mean_stdd must be one of {list(S1F11_MEAN_STDD)}, got {mean_stdd}"
+		mean,stdd = S1F11_MEAN_STDD[mean_stdd]
+		self.register_buffer('mean',mean.clone())
+		self.register_buffer('stdd',stdd.clone())
+		self.gain = gain
+
+	def dihedral(self,x):
+		# PER-SAMPLE FLIPS x TRANSPOSE = THE 8 DIHEDRAL ELEMENTS
+		flip_v,flip_h,transp = (torch.rand(3,x.shape[0],1,1,1,device=x.device) < 0.5)
+		x = torch.where(flip_v,x.flip(2),x)
+		x = torch.where(flip_h,x.flip(3),x)
+		return torch.where(transp,x.transpose(2,3),x)		
+
+	@torch.no_grad()
+	def forward(self,x,y):
+		# MASK RIDES ALONG AS AN EXTRA CHANNEL SO BOTH GET THE SAME GEOMETRY
+		y   = y.view(x.shape[0],1,*x.shape[-2:]) # [B,H,W] OR [B,1,H,W] -> [B,1,H,W]
+		xy  = self.dihedral(torch.cat([x,y],dim=1))
+		x,y = xy[:,:-1].float(),xy[:,-1].long() # [:,-1] DROPS THE CHANNEL DIM -> [B,H,W]
+
+		# GAIN SCALING ON UNIFORM DIST [1-gain,1+gain]
+		if self.gain > 0:
+			g = self.gain
+			x = x * torch.empty(x.shape[0],1,1,1,device=x.device).uniform_(1-g,1+g)
+
+		# NORMALIZE AND ADJUST LABELS
+		x = (x-self.mean)/self.stdd
+		ign = y == S1F11_IGNORE                      # BEFORE THE DIVISION, WHICH TURNS 127 INTO 0 (LAND)
+		y = y.div(255,rounding_mode='floor').masked_fill(ign,S1F11_IGNORE_INDEX)		
+
+		return x,y
+
+
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--data-dir',help='Directory of S2DW chip dataset (the _sorted dir)')
@@ -395,15 +486,4 @@ if __name__ == '__main__':
 		for s in args.s1f11_splits:
 			build_cached_s1f11(args.s1f11_dir,args.cache_dir,s)
 
-
-class S1F11FastDataset(torch.utils.data.Dataset):
-
-	def __init__(self,bands_ndarray,masks_ndarray):
-		pass
-
-	def __len__(self):
-		pass
-
-	def __getitem__(self,idx):
-		pass
 
